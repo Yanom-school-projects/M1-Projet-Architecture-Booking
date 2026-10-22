@@ -12,6 +12,10 @@ router = APIRouter()
     "/capacity",
     summary="Allouer la capacité réservable d'un créneau",
     response_description="L'état de la capacité après application de l'allocation.",
+    responses={
+        409: {"description": "Allocation inférieure au nombre de places déjà réservées sur ce créneau."},
+        422: {"description": "slot_start n'est pas une heure pleine, ou allocated est négatif."},
+    },
 )
 def set_capacity(
     payload: CapacityAllocationRequest,
@@ -21,7 +25,8 @@ def set_capacity(
     type donné sont mises à disposition de Booking sur un créneau horaire.
 
     Remplace la valeur allouée précédente pour ce créneau (opération
-    idempotente) ; n'affecte pas les places déjà réservées (`booked`).
+    idempotente) ; n'affecte pas les places déjà réservées (`booked`) et
+    refuse de descendre en dessous de ce nombre.
     """
     slot = capacity_service.set_allocation(payload.place_type, payload.slot_start, payload.allocated)
     capacity_service.commit()

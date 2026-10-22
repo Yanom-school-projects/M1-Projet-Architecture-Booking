@@ -42,6 +42,10 @@ class ReservationRepository(ABC):
 
 class CapacityRepository(ABC):
     @abstractmethod
+    def find(self, place_type: PlaceType, slot_start: datetime) -> Optional[CapacitySlot]:
+        """Lecture seule : None si Parking n'a encore rien alloué."""
+
+    @abstractmethod
     def get_or_create(self, place_type: PlaceType, slot_start: datetime) -> CapacitySlot: ...
 
     @abstractmethod

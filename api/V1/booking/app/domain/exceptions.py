@@ -24,6 +24,19 @@ class CapacityUnavailableError(DomainError):
         super().__init__("Aucune capacité disponible sur ce créneau")
 
 
+class CapacityBelowBookedError(DomainError):
+    """Parking tente d'allouer moins de places que celles déjà réservées
+    sur un créneau : ces réservations confirmées ne doivent pas être
+    perdues."""
+
+    def __init__(self, allocated: int, booked: int):
+        self.allocated = allocated
+        self.booked = booked
+        super().__init__(
+            f"Impossible d'allouer {allocated} place(s) : {booked} place(s) déjà réservée(s) sur ce créneau"
+        )
+
+
 class ReservationNotFoundError(DomainError):
     def __init__(self, reservation_id: str):
         self.reservation_id = reservation_id

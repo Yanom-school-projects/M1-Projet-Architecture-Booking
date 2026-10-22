@@ -102,6 +102,14 @@ class SqlAlchemyCapacityRepository(CapacityRepository):
     def __init__(self, session: Session):
         self._session = session
 
+    def find(self, place_type: PlaceType, slot_start: datetime) -> Optional[CapacitySlot]:
+        row = (
+            self._session.query(CapacitySlotModel)
+            .filter(CapacitySlotModel.place_type == place_type, CapacitySlotModel.slot_start == slot_start)
+            .one_or_none()
+        )
+        return _capacity_to_domain(row) if row is not None else None
+
     def get_or_create(self, place_type: PlaceType, slot_start: datetime) -> CapacitySlot:
         """Un créneau non encore alloué par Parking vaut 0/0 par défaut
         plutôt que de lever une erreur : la disponibilité est alors

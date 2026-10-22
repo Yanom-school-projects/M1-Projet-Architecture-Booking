@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.domain.exceptions import (
+    CapacityBelowBookedError,
     CapacityUnavailableError,
     ExternalServiceError,
     InvalidReservationStateError,
@@ -18,6 +19,7 @@ from app.domain.exceptions import (
 STATUS_CODES = {
     InvalidSlotError: 422,
     CapacityUnavailableError: 409,
+    CapacityBelowBookedError: 409,
     ReservationNotFoundError: 404,
     InvalidReservationStateError: 409,
     ReservationIdGenerationError: 500,
