@@ -8,11 +8,12 @@ from app.ports.external_services import VehiclesPort
 
 
 class HttpVehiclesClient(VehiclesPort):
-    def __init__(self, base_url: str):
-        self._base_url = base_url
+    def __init__(self, base_url: str, timeout: float = 30.0):
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
 
     async def resolve_vehicle_id(self, plate: str) -> str:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.post(f"{self._base_url}/resolve", json={"plate": plate})
             resp.raise_for_status()
             return resp.json()["vehicle_id"]

@@ -1,10 +1,10 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, Path
 
 from app.application.reservation_service import ReservationService
 
-from ..dependencies import get_reservation_service
+from ..dependencies import get_reservation_service, poll_payment_until_final
 from ..schemas import ReservationCreateRequest, ReservationResponse
 
 router = APIRouter()
@@ -23,6 +23,7 @@ router = APIRouter()
 )
 async def create_reservation(
     payload: ReservationCreateRequest,
+    background_tasks: BackgroundTasks,
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Orchestre la création d'une réservation :
@@ -33,44 +34,40 @@ async def create_reservation(
     4. demande le prix à Pricing ;
     5. déclenche le paiement auprès de Payment.
 
-    La réservation est renvoyée avec le statut `pending_payment` : le
-    paiement peut mettre quelques instants à être confirmé. Le client doit
-    ensuite interroger `GET /reservations/{id}` (ou attendre l'événement
-    `reservation.confirmed`) pour connaître l'issue finale.
+    La réservation est renvoyée avec le statut `pending_payment` : Payment
+    met en général 15 à 30 s à trancher. Booking interroge Payment en tâche
+    de fond et passe la réservation à `confirmed` ou `failed`. Le client
+    suit l'issue avec `GET /reservations/{id}`.
     """
-    return await reservation_service.create_reservation(
+    reservation = await reservation_service.create_reservation(
         vehicle_plate=payload.vehicle_plate,
         email=payload.email,
         place_type=payload.place_type,
         start_at=payload.start_at,
         end_at=payload.end_at,
     )
+    background_tasks.add_task(poll_payment_until_final, reservation.id)
+    return reservation
 
 
 @router.post(
     "/reservations/{reservation_id}/cancel",
-    summary="Annuler une réservation confirmée (remboursement de 50%)",
+    summary="Annuler une réservation confirmée (sans remboursement)",
     response_model=ReservationResponse,
     responses={
         404: {"description": "Aucune réservation avec cet identifiant."},
-        409: {"description": "La réservation n'est pas dans un état annulable (déjà annulée, en attente de paiement, etc.)."},
-        502: {"description": "Payment n'a pas répondu correctement à la demande de remboursement."},
+        409: {"description": "La réservation n'est pas confirmée (déjà annulée, en attente de paiement, etc.)."},
     },
 )
-async def cancel_reservation(
+def cancel_reservation(
     reservation_id: str = Path(..., pattern=r"^\d{6}$", description="Code de réservation à 6 chiffres."),
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
-    """Annule une réservation **confirmée** : le client est remboursé de la
-    moitié du montant payé, l'autre moitié reste acquise au parking. La
-    place redevient immédiatement disponible pour d'autres réservations.
-
-    Statut renvoyé : `cancellation_pending` (remboursement en cours). Le
-    statut final `cancelled` n'est atteint qu'après confirmation du
-    remboursement par Payment — interroger `GET /reservations/{id}` pour le
-    suivre, comme pour la confirmation de paiement initiale.
+    """Annule une réservation **confirmée** et libère immédiatement la place
+    pour d'autres réservations. **Aucun remboursement** : le service Payment
+    ne gère pas les remboursements. Publie l'événement `reservation.cancelled`.
     """
-    return await reservation_service.cancel_reservation(reservation_id)
+    return reservation_service.cancel_reservation(reservation_id)
 
 
 @router.get(
@@ -79,13 +76,14 @@ async def cancel_reservation(
     response_model=ReservationResponse,
     responses={404: {"description": "Aucune réservation avec cet identifiant."}},
 )
-def get_reservation(
+async def get_reservation(
     reservation_id: str = Path(..., pattern=r"^\d{6}$", description="Code de réservation à 6 chiffres."),
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Renvoie l'état courant d'une réservation, notamment utile pour
-    suivre la transition `pending_payment` → `confirmed`/`failed`."""
-    return reservation_service.get_reservation(reservation_id)
+    suivre la transition `pending_payment` → `confirmed`/`failed`. Si le
+    paiement est encore en attente, son statut est redemandé à Payment."""
+    return await reservation_service.get_reservation(reservation_id)
 
 
 @router.get(

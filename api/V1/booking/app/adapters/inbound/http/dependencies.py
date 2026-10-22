@@ -3,6 +3,10 @@ adaptateurs sortants concrets (SQLAlchemy, HTTP, RabbitMQ) à chaque requête.
 C'est le seul endroit qui connaît à la fois les ports et leurs implémentations
 réelles — le reste du code ne manipule que des interfaces."""
 
+import asyncio
+import logging
+import time
+
 from fastapi import Depends
 
 from app.adapters.outbound.external_services.payment_client import HttpPaymentClient
@@ -13,7 +17,11 @@ from app.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.application.capacity_service import CapacityService
 from app.application.reservation_service import ReservationService
 from app.config import settings
+from app.domain.enums import ReservationStatus
+from app.domain.exceptions import ReservationNotFoundError
 from app.ports.unit_of_work import UnitOfWork
+
+logger = logging.getLogger("booking.payment_polling")
 
 # Un seul publisher pour la vie du process : une connexion AMQP est ouverte/
 # fermée à chaque publish() (voir event_publishers.py), pas besoin de recréer
@@ -33,12 +41,44 @@ def get_capacity_service(uow: UnitOfWork = Depends(get_unit_of_work)) -> Capacit
     return CapacityService(uow)
 
 
-def get_reservation_service(uow: UnitOfWork = Depends(get_unit_of_work)) -> ReservationService:
+def build_reservation_service(uow: UnitOfWork) -> ReservationService:
+    timeout = settings.http_timeout_seconds
     return ReservationService(
         uow=uow,
-        vehicles=HttpVehiclesClient(settings.vehicles_service_url),
-        pricing=HttpPricingClient(settings.pricing_service_url),
-        payment=HttpPaymentClient(settings.payment_service_url),
+        vehicles=HttpVehiclesClient(settings.vehicles_service_url, timeout=timeout),
+        pricing=HttpPricingClient(settings.pricing_service_url, timeout=timeout),
+        payment=HttpPaymentClient(settings.payment_service_url, api_key=settings.payment_api_key, timeout=timeout),
         events=_event_publisher,
         settings=settings,
+    )
+
+
+def get_reservation_service(uow: UnitOfWork = Depends(get_unit_of_work)) -> ReservationService:
+    return build_reservation_service(uow)
+
+
+async def poll_payment_until_final(reservation_id: str) -> None:
+    """Tâche de fond lancée après la création d'une réservation : interroge
+    Payment à intervalle régulier jusqu'au statut final, pour que la
+    réservation soit confirmée (et Messages prévenu) même si personne ne
+    consulte la réservation. Une nouvelle unité de travail est ouverte à
+    chaque tour, la requête HTTP d'origine étant déjà terminée."""
+    deadline = time.monotonic() + settings.payment_poll_timeout_seconds
+    while time.monotonic() < deadline:
+        await asyncio.sleep(settings.payment_poll_interval_seconds)
+        uow = SqlAlchemyUnitOfWork()
+        try:
+            reservation = await build_reservation_service(uow).get_reservation(reservation_id)
+            if reservation.status != ReservationStatus.PENDING_PAYMENT:
+                return
+        except ReservationNotFoundError:
+            return
+        except Exception:
+            logger.exception("Erreur pendant le suivi du paiement de la réservation %s", reservation_id)
+        finally:
+            uow.close()
+    logger.warning(
+        "Paiement de la réservation %s toujours en attente après %ss ; il sera revérifié à la prochaine consultation",
+        reservation_id,
+        settings.payment_poll_timeout_seconds,
     )

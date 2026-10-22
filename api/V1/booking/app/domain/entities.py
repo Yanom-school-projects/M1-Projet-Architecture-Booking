@@ -27,7 +27,6 @@ class Reservation:
     price_amount: Optional[Decimal] = None
     price_reference: Optional[str] = None
     payment_id: Optional[str] = None
-    refund_amount: Optional[Decimal] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

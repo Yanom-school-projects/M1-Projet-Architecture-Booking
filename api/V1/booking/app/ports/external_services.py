@@ -22,6 +22,7 @@ class PricingPort(ABC):
 
 class PaymentPort(ABC):
     @abstractmethod
-    async def create_payment(
-        self, amount: Decimal, reference: str, idempotency_key: str, callback_url: str
-    ) -> PaymentAttempt: ...
+    async def create_payment(self, amount: Decimal, reference: str, idempotency_key: str) -> PaymentAttempt: ...
+
+    @abstractmethod
+    async def get_payment(self, payment_id: str) -> PaymentAttempt: ...

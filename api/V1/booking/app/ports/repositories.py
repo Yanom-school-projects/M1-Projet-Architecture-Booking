@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.domain.entities import CapacitySlot, Reservation
-from app.domain.enums import PlaceType
+from app.domain.enums import PlaceType, ReservationStatus
 
 
 class ReservationRepository(ABC):
@@ -26,6 +26,15 @@ class ReservationRepository(ABC):
 
     @abstractmethod
     def delete(self, reservation_id: str) -> None: ...
+
+    @abstractmethod
+    def transition_status(
+        self, reservation_id: str, from_status: ReservationStatus, to_status: ReservationStatus
+    ) -> bool:
+        """Change le statut seulement s'il vaut encore `from_status`, en une
+        seule opération atomique. Renvoie False si quelqu'un d'autre l'a déjà
+        changé : deux traitements concurrents ne peuvent pas appliquer deux
+        fois la même transition."""
 
     @abstractmethod
     def list_by_vehicle(self, vehicle_id: Optional[str]) -> list[Reservation]: ...

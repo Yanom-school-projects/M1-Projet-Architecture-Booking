@@ -5,6 +5,8 @@ import httpx
 import streamlit as st
 
 BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000")
+# Large : sur Render, les services en veille mettent ~30 s à se réveiller.
+TIMEOUT = 90.0
 
 st.set_page_config(page_title="Réservation parking")
 st.title("Réserver une place de parking")
@@ -29,6 +31,7 @@ if check:
     resp = httpx.get(
         f"{BOOKING_API_URL}/availability",
         params={"place_type": place_type, "start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
+        timeout=TIMEOUT,
     )
     if resp.status_code == 200:
         data = resp.json()
@@ -49,17 +52,18 @@ if submit:
             "start_at": start_at.isoformat(),
             "end_at": end_at.isoformat(),
         },
+        timeout=TIMEOUT,
     )
     if resp.status_code != 201:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:
         reservation = resp.json()
         st.session_state["reservation_id"] = reservation["id"]
-        st.info(f"Réservation créée — code n° **{reservation['id']}**, en attente de paiement…")
+        st.info(f"Réservation créée — code n° **{reservation['id']}**, en attente de paiement (15 à 30 s)…")
 
 if "reservation_id" in st.session_state:
     reservation_id = st.session_state["reservation_id"]
-    resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}")
+    resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}", timeout=TIMEOUT)
     if resp.status_code == 200:
         reservation = resp.json()
         st.write("Statut de la réservation :", reservation["status"])
@@ -74,28 +78,15 @@ if "reservation_id" in st.session_state:
 
 st.divider()
 st.subheader("Annuler une réservation")
-st.caption("Remboursement de 50% du montant payé. La réservation doit être confirmée.")
+st.caption("Possible uniquement pour une réservation confirmée. La place est libérée, sans remboursement.")
 
 with st.form("cancel_form"):
     cancel_id = st.text_input("Code de réservation (6 chiffres)", max_chars=6)
     cancel_submit = st.form_submit_button("Annuler la réservation")
 
 if cancel_submit:
-    resp = httpx.post(f"{BOOKING_API_URL}/reservations/{cancel_id}/cancel")
+    resp = httpx.post(f"{BOOKING_API_URL}/reservations/{cancel_id}/cancel", timeout=TIMEOUT)
     if resp.status_code != 200:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:
-        reservation = resp.json()
-        st.session_state["cancel_reservation_id"] = reservation["id"]
-        st.info(f"Annulation en cours, remboursement de {reservation['refund_amount']} € en attente de confirmation…")
-
-if "cancel_reservation_id" in st.session_state:
-    reservation_id = st.session_state["cancel_reservation_id"]
-    resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}")
-    if resp.status_code == 200:
-        reservation = resp.json()
-        if reservation["status"] == "cancellation_pending":
-            st.button("Rafraîchir le statut du remboursement")
-        elif reservation["status"] == "cancelled":
-            st.success(f"Réservation annulée, {reservation['refund_amount']} € remboursés.")
-            del st.session_state["cancel_reservation_id"]
+        st.success(f"Réservation {resp.json()['id']} annulée, la place est libérée.")

@@ -16,10 +16,18 @@ class Settings(BaseSettings):
     pricing_service_url: str = "http://localhost:9000/pricing"
     payment_service_url: str = "http://localhost:9000/payment"
 
-    # URL publique de Booking : transmise à Payment pour qu'il sache où
-    # rappeler le webhook une fois le paiement traité.
-    booking_public_url: str = "http://localhost:8000"
-    payment_webhook_path: str = "/webhooks/payment"
+    # Clé envoyée dans l'en-tête X-API-Key à Payment. Jamais dans Git : à
+    # définir en variable d'environnement (Render) ou dans le .env local.
+    payment_api_key: str = ""
+
+    # Payment ne rappelle pas Booking : c'est Booking qui interroge
+    # GET /payments/{id} jusqu'au statut final (ACCEPTED ou REFUSED).
+    payment_poll_interval_seconds: float = 5.0
+    payment_poll_timeout_seconds: float = 180.0
+
+    # Timeout des appels HTTP sortants. Large, car un service Render gratuit
+    # en veille met ~30 s à se réveiller.
+    http_timeout_seconds: float = 30.0
 
     reservation_horizon_days: int = 30
     reservation_max_duration_hours: int = 24 * 7

@@ -6,15 +6,14 @@ PAYMENT_SERVICE_URL vers les vraies URLs (variables d'env, voir .env.example).
 Lancement : uvicorn mocks.server:app --port 9000 --reload
 """
 
-import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from datetime import datetime
 from decimal import Decimal
 
-import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger("booking.mocks")
@@ -58,105 +57,75 @@ def price_reservation(payload: PricingRequest):
 PAYMENTS: dict[str, dict] = {}
 IDEMPOTENCY: dict[str, str] = {}
 
+# Le vrai Payment tranche en 15-30 s ; le mock va plus vite pour les tests.
+MOCK_SETTLE_SECONDS = 5
+
+
+class PaymentReference(BaseModel):
+    type: str  # "BOOKING" | "PARKING_EXIT"
+    id: str
+
 
 class PaymentRequest(BaseModel):
-    amount: float
-    reference: str
+    """Même contrat que le vrai service Payment (montant en centimes)."""
+
     idempotency_key: str
-    callback_url: str
+    amount: int
+    currency: str = "EUR"
+    reference: PaymentReference
+    source_service: str
 
 
-async def _send_webhook(payment_id: str, status: str, reference: str, callback_url: str) -> None:
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        try:
-            await client.post(
-                callback_url,
-                json={"payment_id": payment_id, "status": status, "reference": reference},
-            )
-        except httpx.HTTPError:
-            logger.exception("Échec de l'appel du webhook de paiement vers %s", callback_url)
-
-
-async def _confirm_payment_later(payment_id: str, reference: str, callback_url: str) -> None:
-    # await asyncio.sleep(1)  # simule le traitement asynchrone du paiement
+def _payment_view(payment_id: str) -> dict:
     payment = PAYMENTS[payment_id]
-    if payment["status"] != "pending":
-        return  # déjà tranché manuellement via /force-status, on n'écrase pas
-    payment["status"] = "paid"
-    await _send_webhook(payment_id, "paid", reference, callback_url)
+    if payment["status"] == "PENDING" and time.monotonic() - payment["created"] >= MOCK_SETTLE_SECONDS:
+        payment["status"] = "ACCEPTED"
+    return {
+        "payment_id": payment_id,
+        "status": payment["status"],
+        "amount": payment["amount"],
+        "currency": payment["currency"],
+        "reference": payment["reference"],
+        "source_service": payment["source_service"],
+    }
 
 
-async def _confirm_refund_later(payment_id: str, reference: str, callback_url: str) -> None:
-    # await asyncio.sleep(1)  # traitement asynchrone du remboursement, plus rapide qu'un paiement
-    payment = PAYMENTS[payment_id]
-    if payment["status"] != "pending":
-        return
-    payment["status"] = "refunded"
-    await _send_webhook(payment_id, "refunded", reference, callback_url)
-
-
-@app.post("/payment/payments")
-def create_payment(payload: PaymentRequest, background_tasks: BackgroundTasks):
-    """Convention de test pour simuler un remboursement (le vrai contrat est
-    à valider avec le service Payment réel) : si un paiement `paid` existe
-    déjà pour cette `reference` et que le nouveau montant demandé est
-    différent, on interprète l'appel comme une demande d'ajustement de prix
-    et on rembourse la différence plutôt que de créer un nouvel encaissement."""
+@app.post("/payment/payments", status_code=202)
+def create_payment(payload: PaymentRequest):
+    """Idempotent : la même clé renvoie le même paiement. Le paiement passe
+    de PENDING à ACCEPTED après quelques secondes (à la lecture)."""
     if payload.idempotency_key in IDEMPOTENCY:
-        payment_id = IDEMPOTENCY[payload.idempotency_key]
-        return {"payment_id": payment_id, "status": PAYMENTS[payment_id]["status"]}
-
-    existing_paid = next(
-        (p for p in PAYMENTS.values() if p["reference"] == payload.reference and p["status"] == "paid"),
-        None,
-    )
-    if existing_paid is not None and Decimal(str(payload.amount)) != Decimal(str(existing_paid["amount"])):
-        payment_id = str(uuid.uuid4())
-        PAYMENTS[payment_id] = {
-            "status": "pending",
-            "amount": payload.amount,
-            "reference": payload.reference,
-            "callback_url": payload.callback_url,
-        }
-        IDEMPOTENCY[payload.idempotency_key] = payment_id
-        existing_paid["amount"] = payload.amount  # le paiement d'origine reflète désormais le nouveau montant
-
-        background_tasks.add_task(_confirm_refund_later, payment_id, payload.reference, payload.callback_url)
-        return {"payment_id": payment_id, "status": "pending"}
+        return _payment_view(IDEMPOTENCY[payload.idempotency_key])
 
     payment_id = str(uuid.uuid4())
     PAYMENTS[payment_id] = {
-        "status": "pending",
+        "status": "PENDING",
         "amount": payload.amount,
-        "reference": payload.reference,
-        "callback_url": payload.callback_url,
+        "currency": payload.currency,
+        "reference": payload.reference.model_dump(),
+        "source_service": payload.source_service,
+        "created": time.monotonic(),
     }
     IDEMPOTENCY[payload.idempotency_key] = payment_id
-
-    background_tasks.add_task(_confirm_payment_later, payment_id, payload.reference, payload.callback_url)
-
-    return {"payment_id": payment_id, "status": "pending"}
+    return _payment_view(payment_id)
 
 
 @app.get("/payment/payments/{payment_id}")
 def get_payment(payment_id: str):
-    return PAYMENTS.get(payment_id, {"status": "unknown"})
+    if payment_id not in PAYMENTS:
+        raise HTTPException(404, "Paiement inconnu")
+    return _payment_view(payment_id)
 
 
 class ForcePaymentStatusRequest(BaseModel):
-    status: str  # "paid" | "refused" | "cancelled" | "refunded"
+    status: str  # "ACCEPTED" | "REFUSED"
 
 
 @app.post("/payment/payments/{payment_id}/force-status")
-async def force_payment_status(payment_id: str, payload: ForcePaymentStatusRequest):
-    """Outil de test uniquement : déclenche immédiatement le webhook avec le
-    statut demandé, sans attendre les 3s de confirmation automatique. Permet
-    de tester les branches refused/cancelled côté Booking, que le flux
-    automatique (toujours `paid`) ne peut pas exercer."""
-    payment = PAYMENTS.get(payment_id)
-    if payment is None:
+def force_payment_status(payment_id: str, payload: ForcePaymentStatusRequest):
+    """Outil de test propre au mock (n'existe pas dans le vrai Payment) :
+    fixe le statut final, par exemple REFUSED pour tester l'échec de paiement."""
+    if payment_id not in PAYMENTS:
         raise HTTPException(404, "Paiement inconnu")
-
-    payment["status"] = payload.status
-    await _send_webhook(payment_id, payload.status, payment["reference"], payment["callback_url"])
-    return {"payment_id": payment_id, "status": payload.status}
+    PAYMENTS[payment_id]["status"] = payload.status
+    return _payment_view(payment_id)

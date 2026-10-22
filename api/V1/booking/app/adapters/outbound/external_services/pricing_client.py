@@ -11,11 +11,12 @@ from app.ports.external_services import PricingPort
 
 
 class HttpPricingClient(PricingPort):
-    def __init__(self, base_url: str):
-        self._base_url = base_url
+    def __init__(self, base_url: str, timeout: float = 30.0):
+        self._base_url = base_url.rstrip("/")
+        self._timeout = timeout
 
     async def get_reservation_price(self, place_type: str, start_at: datetime, end_at: datetime) -> PriceQuote:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.post(
                 f"{self._base_url}/reservation",
                 json={

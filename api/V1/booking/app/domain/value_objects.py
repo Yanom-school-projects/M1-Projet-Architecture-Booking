@@ -13,7 +13,15 @@ class PriceQuote:
     reference: str
 
 
+class PaymentStatus:
+    """Statuts agrégés renvoyés par le service Payment."""
+
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REFUSED = "REFUSED"
+
+
 @dataclass(frozen=True)
 class PaymentAttempt:
     payment_id: str
-    status: str
+    status: str  # une des valeurs de PaymentStatus

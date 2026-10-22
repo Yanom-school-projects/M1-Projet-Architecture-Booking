@@ -63,9 +63,6 @@ class ReservationResponse(BaseModel):
         None, description="Référence de la grille tarifaire utilisée par Pricing (traçabilité)."
     )
     payment_id: Optional[str] = Field(None, description="Identifiant du paiement associé, côté service Payment.")
-    refund_amount: Optional[float] = Field(
-        None, description="Montant remboursé si la réservation a été annulée (moitié du prix payé)."
-    )
 
 
 class CapacityAllocationRequest(BaseModel):
@@ -76,24 +73,3 @@ class CapacityAllocationRequest(BaseModel):
     allocated: int = Field(
         ..., ge=0, description="Nombre total de places de ce type allouées à Booking sur ce créneau."
     )
-
-
-class PaymentWebhookPayload(BaseModel):
-    """Callback envoyé par le service Payment lorsque le statut d'un paiement évolue.
-
-    Le paiement peut d'abord répondre `pending` de façon synchrone à la création,
-    puis rappeler cette route plus tard avec le statut final : `paid`/`refused`/
-    `cancelled` pour une demande de paiement initiale, ou `refunded` pour une
-    demande d'annulation (Booking rappelle Payment avec la même `reference` et
-    un montant à la moitié du prix initial ; Payment détecte l'écart et
-    rembourse la différence). L'appel est traité de façon idempotente : un
-    même statut final reçu plusieurs fois n'est appliqué qu'une seule fois.
-    """
-
-    payment_id: str = Field(..., description="Identifiant du paiement côté service Payment.")
-    status: str = Field(
-        ...,
-        description="Statut du paiement.",
-        examples=["pending", "paid", "refused", "cancelled", "refunded"],
-    )
-    reference: str = Field(..., description="Référence métier du paiement : l'identifiant de la réservation.")

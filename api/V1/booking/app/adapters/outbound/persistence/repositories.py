@@ -7,7 +7,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.domain.entities import CapacitySlot, Reservation
-from app.domain.enums import PlaceType
+from app.domain.enums import PlaceType, ReservationStatus
 from app.ports.repositories import CapacityRepository, ReservationRepository
 
 from .orm_models import CapacitySlotModel, ReservationModel
@@ -25,7 +25,6 @@ def _reservation_to_domain(row: ReservationModel) -> Reservation:
         price_amount=row.price_amount,
         price_reference=row.price_reference,
         payment_id=row.payment_id,
-        refund_amount=row.refund_amount,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -60,7 +59,6 @@ class SqlAlchemyReservationRepository(ReservationRepository):
             price_amount=reservation.price_amount,
             price_reference=reservation.price_reference,
             payment_id=reservation.payment_id,
-            refund_amount=reservation.refund_amount,
         )
         self._session.add(row)
         self._session.flush()
@@ -73,7 +71,6 @@ class SqlAlchemyReservationRepository(ReservationRepository):
         row.price_amount = reservation.price_amount
         row.price_reference = reservation.price_reference
         row.payment_id = reservation.payment_id
-        row.refund_amount = reservation.refund_amount
         self._session.flush()
         reservation.updated_at = row.updated_at
 
@@ -81,6 +78,18 @@ class SqlAlchemyReservationRepository(ReservationRepository):
         row = self._session.get(ReservationModel, reservation_id)
         if row is not None:
             self._session.delete(row)
+
+    def transition_status(
+        self, reservation_id: str, from_status: ReservationStatus, to_status: ReservationStatus
+    ) -> bool:
+        # UPDATE ... WHERE status = from_status : la base sérialise les
+        # écritures concurrentes, une seule d'entre elles modifie la ligne.
+        updated = (
+            self._session.query(ReservationModel)
+            .filter(ReservationModel.id == reservation_id, ReservationModel.status == from_status)
+            .update({"status": to_status, "updated_at": datetime.utcnow()}, synchronize_session=False)
+        )
+        return updated == 1
 
     def list_by_vehicle(self, vehicle_id: Optional[str]) -> list[Reservation]:
         query = self._session.query(ReservationModel)

@@ -10,7 +10,7 @@ import logging
 from fastapi import FastAPI
 
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
-from app.adapters.inbound.http.routers import availability, capacity, health, reservations, webhooks
+from app.adapters.inbound.http.routers import availability, capacity, health, reservations
 from app.adapters.outbound.persistence.database import Base, engine
 
 logging.basicConfig(level=logging.INFO)
@@ -27,20 +27,18 @@ confirmation.
   créneau horaire (`PUT /capacity`).
 - **Vehicles** résout la plaque du client en identifiant pseudonymisé.
 - **Pricing** calcule le montant d'une réservation.
-- **Payment** encaisse le paiement ; le résultat final arrive de façon
-  **asynchrone** sur `POST /webhooks/payment` (le paiement peut rester
-  `pending` un moment avant confirmation).
+- **Payment** encaisse le paiement. Il répond d'abord `PENDING` ; Booking
+  l'interroge ensuite (`GET /payments/{id}`) jusqu'à `ACCEPTED` ou `REFUSED`.
 - **Access** interroge Booking pour vérifier qu'un véhicule qui se présente
   possède une réservation valable.
 - **Messages** reçoit les événements `reservation.confirmed` et
   `reservation.cancelled` pour générer les confirmations/reçus client.
 
 ### Cycle de vie d'une réservation
-`pending_payment` → `confirmed` (paiement reçu) ou `failed` (paiement refusé
-ou expiré). Une réservation `confirmed` peut être annulée par le client
-(`POST /reservations/{id}/cancel`, remboursement de 50%) : elle passe alors
-par `cancellation_pending` en attendant la confirmation du remboursement,
-puis `cancelled`.
+`pending_payment` → `confirmed` (paiement accepté) ou `failed` (paiement
+refusé). Une réservation `confirmed` peut être annulée par le client
+(`POST /reservations/{id}/cancel`) : elle passe à `cancelled` et la place est
+libérée, **sans remboursement** (Payment ne gère pas les remboursements).
 
 ### Architecture
 Ce service suit une architecture hexagonale (ports & adapters) : voir
@@ -53,7 +51,6 @@ TAGS_METADATA = [
     {"name": "availability", "description": "Consultation de la capacité réservable, sans effet de bord métier."},
     {"name": "reservations", "description": "Création et consultation des réservations d'une place de parking."},
     {"name": "capacity", "description": "Allocation de la capacité réservable par créneau. Appelé par le service Parking."},
-    {"name": "webhooks", "description": "Callbacks asynchrones envoyés par les autres services (paiement)."},
 ]
 
 app = FastAPI(
@@ -69,4 +66,3 @@ app.include_router(health.router, tags=["health"])
 app.include_router(availability.router, tags=["availability"])
 app.include_router(reservations.router, tags=["reservations"])
 app.include_router(capacity.router, tags=["capacity"])
-app.include_router(webhooks.router, tags=["webhooks"])
