@@ -8,17 +8,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env")
+    # extra="ignore" : une variable inconnue dans le .env ne doit pas
+    # empêcher le service de démarrer.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "sqlite:///./booking.db"
 
     vehicles_service_url: str = "http://localhost:9000/vehicles"
     pricing_service_url: str = "http://localhost:9000/pricing"
     payment_service_url: str = "http://localhost:9000/payment"
+    # Booking lit chez Parking le nombre de places réservables par type
+    # (vide = pas de synchronisation, la capacité vient de PUT /capacity).
+    parking_service_url: str = ""
+    parking_sync_interval_seconds: float = 3600.0
 
-    # Clé envoyée dans l'en-tête X-API-Key à Payment. Jamais dans Git : à
-    # définir en variable d'environnement (Render) ou dans le .env local.
+    # Clés envoyées dans l'en-tête X-API-Key à chaque service (vide = pas
+    # d'en-tête). Jamais dans Git : à définir en variable d'environnement
+    # (Render) ou dans le .env local.
+    vehicles_api_key: str = ""
+    pricing_api_key: str = ""
     payment_api_key: str = ""
+    parking_api_key: str = ""
 
     # Payment ne rappelle pas Booking : c'est Booking qui interroge
     # GET /payments/{id} jusqu'au statut final (ACCEPTED ou REFUSED).

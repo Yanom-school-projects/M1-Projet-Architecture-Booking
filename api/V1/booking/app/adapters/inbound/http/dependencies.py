@@ -45,8 +45,8 @@ def build_reservation_service(uow: UnitOfWork) -> ReservationService:
     timeout = settings.http_timeout_seconds
     return ReservationService(
         uow=uow,
-        vehicles=HttpVehiclesClient(settings.vehicles_service_url, timeout=timeout),
-        pricing=HttpPricingClient(settings.pricing_service_url, timeout=timeout),
+        vehicles=HttpVehiclesClient(settings.vehicles_service_url, api_key=settings.vehicles_api_key, timeout=timeout),
+        pricing=HttpPricingClient(settings.pricing_service_url, api_key=settings.pricing_api_key, timeout=timeout),
         payment=HttpPaymentClient(settings.payment_service_url, api_key=settings.payment_api_key, timeout=timeout),
         events=_event_publisher,
         settings=settings,
