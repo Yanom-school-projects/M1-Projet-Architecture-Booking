@@ -19,12 +19,13 @@ from pydantic import BaseModel
 logger = logging.getLogger("booking.mocks")
 app = FastAPI(title="Mocks: Vehicles / Pricing / Payment")
 
+# Tarifs horaires "reserved" du vrai Pricing, par zone.
 RATES = {
-    "standard": Decimal("2.00"),
-    "xl": Decimal("3.00"),
-    "handicap": Decimal("2.00"),
-    "electrique": Decimal("2.50"),
-    "deux_roues": Decimal("1.00"),
+    "standard": Decimal("2.50"),
+    "xl": Decimal("4.00"),
+    "disabled": Decimal("1.25"),
+    "electric": Decimal("3.00"),
+    "two_wheels": Decimal("0.80"),
 }
 
 
@@ -38,20 +39,29 @@ def resolve_vehicle(payload: ResolveVehicleRequest):
     return {"vehicle_id": vehicle_id}
 
 
-class PricingRequest(BaseModel):
-    place_type: str
-    start_at: str
-    end_at: str
+class QuoteRequest(BaseModel):
+    """Même contrat que le vrai service Pricing."""
+
+    zone: str
+    mode: str  # "reserved" | "walk_in"
+    duration_min: int
 
 
-@app.post("/pricing/reservation")
-def price_reservation(payload: PricingRequest):
-    start = datetime.fromisoformat(payload.start_at)
-    end = datetime.fromisoformat(payload.end_at)
-    hours = Decimal(str((end - start).total_seconds() / 3600))
-    rate = RATES.get(payload.place_type, Decimal("2.00"))
-    amount = (rate * hours).quantize(Decimal("0.01"))
-    return {"amount": float(amount), "price_reference": "mock-grid-v1"}
+@app.post("/pricing/quote", status_code=201)
+def quote(payload: QuoteRequest):
+    if payload.zone not in RATES:
+        raise HTTPException(404, {"code": "ZONE_NOT_FOUND", "message": payload.zone})
+    hours = -(-payload.duration_min // 60)  # toute heure entamée est due
+    amount = (RATES[payload.zone] * hours).quantize(Decimal("0.01"))
+    return {
+        "quote_id": str(uuid.uuid4()),
+        "grid_id": "mock-grid",
+        "grid_version": 1,
+        "amount_eur": str(amount),
+        "currency": "EUR",
+        "breakdown": {"zone": payload.zone, "mode": payload.mode, "duration_min": payload.duration_min},
+        "computed_at": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 PAYMENTS: dict[str, dict] = {}
