@@ -5,13 +5,16 @@ métier, et déclenche la création du schéma de persistance (adaptateur
 sortant). Le câblage détaillé des cas d'usage avec leurs adaptateurs
 concrets se fait requête par requête dans adapters/inbound/http/dependencies.py."""
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
-from app.adapters.inbound.http.routers import availability, capacity, health, reservations
+from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
 from app.adapters.outbound.persistence.database import Base, engine
+from app.config import settings
 
 logging.basicConfig(level=logging.INFO)
 
@@ -23,8 +26,10 @@ d'une réservation : recherche de créneau, tarification, paiement anticipé et
 confirmation.
 
 ### Rôle dans le système
-- **Parking** alloue à Booking un nombre de places réservables par type et par
-  créneau horaire (`PUT /capacity`).
+- **Parking** indique combien de places de chaque type sont proposées à la
+  réservation : Booking le lit au démarrage puis toutes les heures
+  (`POST /capacity/sync` pour forcer). `PUT /capacity` permet aussi d'ajuster
+  un créneau précis.
 - **Vehicles** résout la plaque du client en identifiant pseudonymisé.
 - **Pricing** calcule le montant d'une réservation.
 - **Payment** encaisse le paiement. Il répond d'abord `PENDING` ; Booking
@@ -53,10 +58,21 @@ TAGS_METADATA = [
     {"name": "capacity", "description": "Allocation de la capacité réservable par créneau. Appelé par le service Parking."},
 ]
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # Synchro de capacité avec Parking en tâche de fond : le service démarre
+    # sans attendre que Parking (éventuellement en veille) réponde.
+    task = asyncio.create_task(parking_sync.parking_sync_loop()) if settings.parking_service_url else None
+    yield
+    if task:
+        task.cancel()
+
+
 app = FastAPI(
+    lifespan=lifespan,
     title="Booking Service",
     description=API_DESCRIPTION,
-    version="0.2.0",
+    version="0.3.0",
     openapi_tags=TAGS_METADATA,
 )
 
@@ -66,3 +82,4 @@ app.include_router(health.router, tags=["health"])
 app.include_router(availability.router, tags=["availability"])
 app.include_router(reservations.router, tags=["reservations"])
 app.include_router(capacity.router, tags=["capacity"])
+app.include_router(parking_sync.router, tags=["capacity"])
