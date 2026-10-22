@@ -1,5 +1,6 @@
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 import streamlit as st
@@ -7,6 +8,10 @@ import streamlit as st
 BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000")
 # Large : sur Render, les services en veille mettent ~30 s à se réveiller.
 TIMEOUT = 90.0
+# Le client saisit l'heure de Paris ; l'API reçoit la date avec son fuseau
+# et la convertit elle-même en UTC.
+PARIS = ZoneInfo("Europe/Paris")
+now_paris = datetime.now(PARIS)
 
 st.set_page_config(page_title="Réservation parking")
 st.title("Réserver une place de parking")
@@ -17,14 +22,14 @@ with st.form("reservation_form"):
     plate = st.text_input("Plaque d'immatriculation", value="AB-123-CD")
     email = st.text_input("Email (pour la confirmation)", value="")
     place_type = st.selectbox("Type de place", PLACE_TYPES)
-    date = st.date_input("Date", value=datetime.now().date())
-    start_hour = st.number_input("Heure de début", min_value=0, max_value=23, value=datetime.now().hour)
+    date = st.date_input("Date", value=now_paris.date())
+    start_hour = st.number_input("Heure de début (heure de Paris)", min_value=0, max_value=23, value=now_paris.hour)
     duration_hours = st.number_input("Durée (heures)", min_value=1, max_value=24 * 7, value=1)
     check_col, submit_col = st.columns(2)
     check = check_col.form_submit_button("Vérifier la disponibilité")
     submit = submit_col.form_submit_button("Réserver")
 
-start_at = datetime.combine(date, datetime.min.time()) + timedelta(hours=int(start_hour))
+start_at = datetime.combine(date, datetime.min.time(), tzinfo=PARIS) + timedelta(hours=int(start_hour))
 end_at = start_at + timedelta(hours=int(duration_hours))
 
 if check:
