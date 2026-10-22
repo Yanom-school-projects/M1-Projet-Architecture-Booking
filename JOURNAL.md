@@ -47,31 +47,42 @@ Suite
 ## 22 octobre
 
 Fait
-- récupération des documents officiels « Règles métier » et « Rendu » ;
-- comparaison du code avec ces documents et point d'étape (ci-dessous) ;
-- code poussé sur GitHub ;
-- **intégration réelle avec Payment** (https://payment-xp8n.onrender.com) testée de bout en bout :
-  - montant envoyé en centimes, `reference: {type: BOOKING, id}`, `source_service: booking`, en-tête `X-API-Key` ;
+- récupération des documents officiels « Règles métier » et « Rendu », comparaison avec le code ;
+- code poussé sur GitHub, API et front déployés sur Render ;
+- **Payment** (https://payment-xp8n.onrender.com) intégré et testé de bout en bout :
+  - montant en centimes, `reference: {type: BOOKING, id}`, `source_service: booking`, en-tête `X-API-Key` ;
   - Payment ne rappelle pas Booking : Booking interroge `GET /payments/{id}` en tâche de fond toutes les 5 s, et à chaque consultation d'une réservation en attente ;
-  - `ACCEPTED` → `confirmed` + événement `reservation.confirmed`, `REFUSED` → `failed` + place libérée ;
   - webhook `/webhooks/payment` supprimé (il permettait à n'importe qui de valider un paiement) ;
-- bug corrigé : deux vérifications simultanées publiaient deux fois `reservation.confirmed`. Le changement de statut est maintenant atomique en base ;
+- **Pricing** (https://pricing-9khk.onrender.com) intégré : `POST /quote` avec zone, mode `reserved` et durée en minutes. Le `quote_id` est conservé pour la traçabilité de la grille ;
+- **Parking** (https://parking-6r73.onrender.com) intégré : Booking lit le nombre de places réservables par catégorie au démarrage, puis toutes les heures, et l'applique aux 37 prochains jours (`POST /capacity/sync` pour forcer). Sur Render, la capacité se remplit donc toute seule après un redémarrage ;
+- connexion RabbitMQ vérifiée (exchange `microservice-event-bus` présent) ;
 - annulation conservée, mais **sans remboursement** : Payment ne gère pas les remboursements ;
-- mock Payment aligné sur le vrai contrat, pour travailler en local.
+- `/health` renvoie la version (0.3.0) ;
+- correctifs trouvés en testant :
+  - deux vérifications simultanées publiaient deux fois `reservation.confirmed` : le changement de statut est maintenant atomique ;
+  - l'API ne démarrait plus quand le `.env` contenait des variables inconnues ;
+  - Vehicles absent ou en panne donnait une erreur 500, maintenant une erreur 502 avec un message clair ;
+  - une date avec fuseau (`+02:00`) donnait une erreur 500 ; tout est maintenant ramené en UTC et le front envoie l'heure de Paris ;
+  - la recherche de disponibilité ne validait pas le créneau, et une recherche sur un an créait 8 760 lignes en base ;
+  - `PUT /capacity` acceptait une heure non pleine et une capacité inférieure aux places déjà réservées ;
+  - l'erreur d'origine d'un échec Pricing/Payment n'était pas journalisée.
 
 Problèmes
-- service pas encore déployé : pas d'URL publique ni de Swagger en ligne ;
-- pas de tests, pas de CI/CD, pas encore de protection de nos propres routes ;
-- `docs/booking_architecture.md` et `docs/booking_test_scenario.md` décrivent encore l'ancien fonctionnement (webhook, remboursement de 50 %).
+- Vehicles n'a pas encore d'URL : en ligne, la création de réservation renvoie 502 tant qu'il manque ;
+- un appel à Payment a échoué une fois sans réponse (coupure ou délai dépassé), sans pouvoir en savoir plus à ce moment-là : c'est désormais journalisé ;
+- Parking expose le nombre de places réservables **libres à l'instant T**, pas un quota par créneau : à clarifier avec l'équipe Parking ;
+- pas de tests automatisés, pas de CI, routes sensibles non protégées ;
+- `docs/booking_architecture.md` et `docs/booking_test_scenario.md` décrivent encore l'ancien fonctionnement.
 
 Suite
-- déployer sur Render avec les URL des vrais services ;
-- brancher Vehicles, Pricing, Parking et Access dès réception de leurs URL ;
-- voir la liste « Reste à faire ».
+- brancher Vehicles dès qu'il a une URL, et tester le parcours complet en ligne ;
+- ajouter un endpoint pour Access (réservation valable à un instant donné) ;
+- protéger les routes sensibles par clé d'API ;
+- tests pytest et pipeline CI.
 
 ---
 
-## Point d'étape au 22 octobre
+## Point d'étape au 22 octobre (fin de journée)
 
 ### État par aspect de maturité
 
@@ -79,67 +90,58 @@ Suite
 
 | Aspect | État | Constat |
 |---|---|---|
-| Métier | 2 | Capacité dans le temps, créneaux et cycle de vie conformes aux règles. Seul écart : l'annulation, que les règles excluent (§2.7). |
-| API / Déploiement | 1 | `/health`, Swagger et version 0.2.0 en local. Non déployé sur Render. |
-| Intégration | 1 | Payment réel et RabbitMQ branchés. Vehicles et Pricing sont encore des mocks. Parking et Access ne sont pas encore connectés. |
-| Interface | 2 | Front Streamlit pour réserver, suivre le statut et annuler. |
-| Qualité | 1 | Logs simples, erreurs propres, configuration par variables d'environnement. Aucun test, pas de `/metrics`. |
-| CI/CD | 0 | Pas de pipeline. Le dossier n'est pas un dépôt git en local. |
-| Sécurité | 0 | Aucune authentification. Les secrets sont dans `.env`, ignoré par git (c'est bien). |
+| Métier | 2 | Capacité dans le temps, créneaux et cycle de vie conformes aux règles. Écart assumé : l'annulation (sans remboursement). |
+| API / Déploiement | 2 | Déployé sur Render, `/health` avec version, Swagger en ligne. Base SQLite non persistante. |
+| Intégration | 2 | Payment, Pricing, Parking et RabbitMQ réels. Il manque Vehicles (pas d'URL) et Access. |
+| Interface | 2 | Front Streamlit en heure de Paris : disponibilité, réservation, suivi, annulation. |
+| Qualité | 1 | Logs, erreurs propres (422/404/409/502), configuration par variables d'environnement. Aucun test automatisé, pas de `/metrics`. |
+| CI/CD | 1 | Redéploiement automatique sur Render à chaque push sur `main`, mais sans tests. |
+| Sécurité | 0 | Aucune route protégée. Secrets hors de Git, clé envoyée à Payment. |
 
-### Fonctionnalités (à reprendre dans le README)
+### Fonctionnalités
 
 - [x] Je peux consulter les disponibilités d'un type de place sur un créneau.
 - [x] Je peux réserver une place sur un créneau (heures pleines, 30 jours max à l'avance, 7 jours max de durée).
 - [x] Je peux empêcher de réserver plus de places que la capacité disponible.
-- [x] Parking peut définir la capacité réservable par type et par heure (testé avec le script, pas avec le vrai Parking).
-- [ ] Je peux demander le prix à Pricing (fonctionne avec le mock seulement).
-- [x] Je peux faire payer la réservation avec Payment (vrai service, testé le 22 octobre).
-- [ ] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles (mock seulement).
-- [x] Messages est prévenu quand une réservation est confirmée (événement RabbitMQ).
-- [ ] Access peut vérifier qu'un véhicule possède une réservation valable *maintenant*. Aujourd'hui, Access ne peut que lister toutes les réservations du véhicule et doit filtrer lui-même.
+- [x] Je récupère auprès de Parking le nombre de places proposées à la réservation.
+- [x] Je peux demander le prix à Pricing.
+- [x] Je peux faire payer la réservation avec Payment.
+- [ ] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles (pas encore d'URL).
+- [x] Messages est prévenu quand une réservation est confirmée ou annulée (événement RabbitMQ).
+- [x] Je peux annuler une réservation confirmée (sans remboursement).
+- [ ] Access peut vérifier qu'un véhicule possède une réservation valable *maintenant*.
 
 ### Reste à faire (par priorité)
 
-**1. Déploiement (API / Déploiement)**
-- [x] Mettre le code sur GitHub.
-- [ ] Déployer l'API et le front sur Render. Passer à Postgres via `DATABASE_URL` : le SQLite de Render est effacé à chaque redéploiement.
-- [ ] Renseigner `PAYMENT_API_KEY` dans les variables d'environnement Render (jamais dans Git).
-- [ ] Ajouter la version dans `/health` (ex. `{"status": "ok", "version": "0.2.0"}`).
+**1. Intégration**
+- [ ] Vehicles : renseigner `VEHICLES_SERVICE_URL` et vérifier le contrat (`POST /resolve` → `{vehicle_id}`).
+- [ ] Access : endpoint dédié, par exemple `GET /reservations/active?vehicle_id=...&at=...`, qui ne renvoie que les réservations `confirmed` couvrant l'instant donné.
+- [ ] Parking : savoir si `spot_available` (booking) est un quota ou un nombre de places libres maintenant.
+- [ ] Messages : confirmer le format du champ `event` (`RESERVATION_CONFIRMED`).
+- [ ] Tester le parcours complet en ligne (front Render → Booking → Vehicles/Pricing/Payment → Messages).
 
-**2. Intégration réelle (Intégration)**
-- [ ] Valider avec Vehicles : `POST /resolve` → `{vehicle_id}`.
-- [ ] Valider avec Pricing : `POST /reservation` → `{amount, price_reference}`.
-- [x] Valider avec Payment : contrat réel intégré (polling, centimes, `X-API-Key`).
-- [ ] Valider avec Parking : qui appelle `PUT /capacity`, à quel moment, et comment éviter de réduire la capacité sous le nombre de places déjà réservées.
-- [ ] Ajouter pour Access un endpoint dédié, par exemple `GET /reservations/active?vehicle_id=...&at=...`, qui ne renvoie que les réservations `confirmed` couvrant l'instant donné.
-- [ ] Confirmer avec Messages le format du champ `event` (`RESERVATION_CONFIRMED`).
-- [ ] Remplacer les URL des mocks par celles des vrais services dans les variables d'environnement Render.
+**2. Sécurité**
+- [ ] Clé d'API pour les routes appelées par les autres services (lecture des réservations par Access).
+- [ ] Clé admin pour `PUT /capacity`, `POST /capacity/sync` et `GET /reservations` sans filtre (expose les e-mails de tous les clients).
+- [ ] Laisser publics seulement `/health`, `/availability`, `POST /reservations` et `GET /reservations/{id}`.
 
-**3. Sécurité**
-- [ ] Clé d'API (variable d'environnement) pour les appels entre services : `PUT /capacity` (Parking), lecture des réservations par Access.
-- [x] Clé `X-API-Key` envoyée à Payment (prête pour le jour où Payment l'activera).
-- [ ] Clé admin pour `PUT /capacity` et `GET /reservations` sans filtre, qui expose aujourd'hui les emails de tous les clients.
-- [ ] Laisser publics seulement `/health`, `/availability` et `POST /reservations`.
-
-**4. Qualité**
-- [ ] Tests unitaires de `domain/rules.py` et de `CapacityService` (pytest).
-- [ ] Tests de l'API avec `TestClient` et de faux adaptateurs (scénario complet : réservation → webhook paid → confirmed).
-- [ ] Logs structurés sur les appels sortants (durée, code HTTP).
+**3. Qualité**
+- [ ] Tests pytest : `domain/rules.py`, `CapacityService`, scénario complet avec faux adaptateurs (réservation → ACCEPTED → confirmed).
 - [ ] `/metrics`, si le temps le permet.
 
-**5. CI/CD**
-- [ ] GitHub Actions : lancer les tests à chaque push.
-- [ ] Déploiement automatique sur Render une fois les tests passés sur `main`.
+**4. CI/CD**
+- [ ] GitHub Actions : lancer les tests à chaque push ; ne déployer sur Render que si les tests passent.
+
+**5. Déploiement**
+- [ ] Base Postgres sur Render pour garder les réservations entre deux redémarrages.
 
 **6. Rendus**
-- [ ] Mettre à jour `docs/booking_architecture.md` et `docs/booking_test_scenario.md` (polling Payment, annulation sans remboursement).
-- [ ] `README.md` : rôle, version, URL déployée, URL Swagger, dépendances, comment tester, fonctionnalités.
-- [ ] Tenir ce journal à jour chaque jour de travail.
+- [x] `README.md`.
+- [ ] Mettre à jour `docs/booking_architecture.md` et `docs/booking_test_scenario.md`.
 - [ ] Remplir la ligne Booking du tableau de suivi collectif.
 
-### Écarts avec les règles métier à trancher
+### Écarts avec les règles métier
 
-- **Annulation** : les règles (§2.7) disent qu'une réservation « n'est pas annulable ou modifiable », mais la fiche Booking (§3.5) parle d'« annuler ». Choix du 22 octobre : annulation conservée, sans remboursement (Payment n'en gère pas). Elle libère seulement la place. À présenter comme une extension.
+- **Annulation** : les règles (§2.7) disent qu'une réservation « n'est pas annulable ou modifiable », mais la fiche Booking (§3.5) parle d'« annuler ». Choix : annulation conservée, sans remboursement. Elle libère seulement la place. À présenter comme une extension.
 - **Horizon de 30 jours** : la règle ajoute les jours réservables un par un à minuit. Le code utilise une fenêtre glissante de 30 jours à partir de l'heure courante. L'écart est faible mais réel.
-- **Fuseau horaire** : l'API compare les dates à l'heure UTC alors que le front envoie l'heure locale (Paris, +1/+2 h). À vérifier sur la règle « l'heure en cours est réservable ».
+- **Fuseau horaire** : réglé. L'API travaille en UTC et accepte les dates avec fuseau ; le front saisit l'heure de Paris.
