@@ -123,6 +123,7 @@ class ReservationService:
         except Exception as exc:
             # Pricing ou Payment indisponible : on annule proprement plutôt
             # que de laisser une réservation bloquée sans paiement associé.
+            logger.error("Échec Pricing/Payment pour la réservation %s : %r", reservation.id, exc)
             self._capacity.release(place_type, start_at, end_at)
             self._uow.reservations.delete(reservation.id)
             self._uow.commit()
