@@ -97,6 +97,22 @@ class SqlAlchemyReservationRepository(ReservationRepository):
             query = query.filter(ReservationModel.vehicle_id == vehicle_id)
         return [_reservation_to_domain(row) for row in query.all()]
 
+    def list_covering(
+        self, vehicle_id: str, at: datetime, statuses: list[ReservationStatus]
+    ) -> list[Reservation]:
+        rows = (
+            self._session.query(ReservationModel)
+            .filter(
+                ReservationModel.vehicle_id == vehicle_id,
+                ReservationModel.status.in_(statuses),
+                ReservationModel.start_at <= at,
+                ReservationModel.end_at > at,
+            )
+            .order_by(ReservationModel.start_at)
+            .all()
+        )
+        return [_reservation_to_domain(row) for row in rows]
+
 
 class SqlAlchemyCapacityRepository(CapacityRepository):
     def __init__(self, session: Session):

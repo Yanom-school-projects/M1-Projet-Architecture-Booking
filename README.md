@@ -14,7 +14,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 ## Version
 
-**0.3.0**, renvoyée par `GET /health`.
+**0.4.0**, renvoyée par `GET /health`.
 
 ## URL
 
@@ -37,7 +37,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 - [ ] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles (en attente de son URL).
 - [x] Messages est prévenu quand une réservation est confirmée ou annulée.
 - [x] Je peux annuler une réservation confirmée (sans remboursement, extension aux règles métier).
-- [ ] Access peut vérifier qu'un véhicule possède une réservation valable maintenant.
+- [x] Access peut vérifier qu'un véhicule possède une réservation valable maintenant.
 
 ## Dépendances avec les autres services
 
@@ -47,7 +47,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 | Pricing | Booking → Pricing | `POST /quote` (zone, `reserved`, durée en minutes) → montant + `quote_id` | HTTP synchrone : le prix est nécessaire avant le paiement |
 | Payment | Booking → Payment | `POST /payments` (centimes, clé d'idempotence), puis `GET /payments/{id}` jusqu'à `ACCEPTED`/`REFUSED` | HTTP + interrogation régulière : Payment tranche en 15 à 30 s et ne rappelle pas |
 | Parking | Booking → Parking | `GET /parking/availability/{catégorie}/booking` au démarrage puis toutes les heures | HTTP : Parking est l'autorité sur le stock |
-| Access | Access → Booking | `GET /reservations?vehicle_id=...` | HTTP synchrone : Access doit décider de l'entrée |
+| Access | Access → Booking | `GET /reservations/active?vehicle_id=...` → `valid` + type de place réservé | HTTP synchrone : Access doit décider de l'entrée |
 | Messages | Booking → bus | événements `booking.confirmed` et `booking.cancelled` (RabbitMQ, exchange `microservice-event-bus`) | Asynchrone : Booking annonce un fait sans attendre |
 
 Correspondance des types de place :
@@ -68,7 +68,8 @@ Correspondance des types de place :
 | GET | `/availability?place_type=&start_at=&end_at=` | Places libres sur un créneau |
 | POST | `/reservations` | Créer une réservation (réponse `pending_payment`) |
 | GET | `/reservations/{id}` | Suivre une réservation (`pending_payment` → `confirmed` / `failed`) |
-| GET | `/reservations?vehicle_id=` | Réservations d'un véhicule (utilisé par Access) |
+| GET | `/reservations/active?vehicle_id=&at=` | Réservation valable à un instant donné, par défaut maintenant (utilisé par Access) |
+| GET | `/reservations?vehicle_id=` | Historique des réservations d'un véhicule |
 | POST | `/reservations/{id}/cancel` | Annuler une réservation confirmée |
 | PUT | `/capacity` | Ajuster la capacité d'un créneau précis |
 | POST | `/capacity/sync` | Relancer la synchronisation de capacité avec Parking |

@@ -39,6 +39,13 @@ class ReservationRepository(ABC):
     @abstractmethod
     def list_by_vehicle(self, vehicle_id: Optional[str]) -> list[Reservation]: ...
 
+    @abstractmethod
+    def list_covering(
+        self, vehicle_id: str, at: datetime, statuses: list[ReservationStatus]
+    ) -> list[Reservation]:
+        """Réservations du véhicule dont le créneau contient `at`
+        (`start_at <= at < end_at`) et dont le statut est dans `statuses`."""
+
 
 class CapacityRepository(ABC):
     @abstractmethod

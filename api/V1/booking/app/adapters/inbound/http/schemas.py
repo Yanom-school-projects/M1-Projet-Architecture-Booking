@@ -93,6 +93,29 @@ class ReservationResponse(BaseModel):
     payment_id: Optional[str] = Field(None, description="Identifiant du paiement associé, côté service Payment.")
 
 
+class ValidReservation(BaseModel):
+    """Réservation qui couvre l'instant vérifié. Sans l'e-mail du client :
+    Access n'en a pas besoin pour décider de l'entrée."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Code de réservation à 6 chiffres.", examples=["482913"])
+    place_type: PlaceType = Field(..., description="Type de place réservé, à attribuer à l'entrée.")
+    start_at: UtcDatetimeOut = Field(..., description="Début du créneau réservé (UTC).")
+    end_at: UtcDatetimeOut = Field(..., description="Fin du créneau réservé (UTC).")
+
+
+class ReservationCheckResponse(BaseModel):
+    """Réponse à Access : le véhicule a-t-il une réservation valable à cet instant ?"""
+
+    vehicle_id: str = Field(..., description="Identifiant pseudonymisé vérifié.")
+    at: UtcDatetimeOut = Field(..., description="Instant vérifié (UTC).")
+    valid: bool = Field(..., description="True si au moins une réservation confirmée couvre cet instant.")
+    reservations: list[ValidReservation] = Field(
+        ..., description="Réservations confirmées couvrant cet instant (vide si `valid` est false)."
+    )
+
+
 class CapacityAllocationRequest(BaseModel):
     """Allocation de capacité réservable pour un créneau, poussée par le service Parking."""
 

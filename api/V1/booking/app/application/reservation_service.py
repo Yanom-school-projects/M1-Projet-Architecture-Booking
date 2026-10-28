@@ -176,10 +176,28 @@ class ReservationService:
         return await self.sync_payment_status(reservation)
 
     def list_reservations(self, vehicle_id: Optional[str]) -> list[Reservation]:
-        """Utilisé notamment par le service Access pour vérifier qu'un
-        véhicule qui se présente à l'entrée possède une réservation
-        valable. Sans `vehicle_id`, renvoie toutes les réservations."""
+        """Historique des réservations d'un véhicule, tous statuts confondus.
+        Sans `vehicle_id`, renvoie toutes les réservations."""
         return self._uow.reservations.list_by_vehicle(vehicle_id)
+
+    async def find_valid_reservations(self, vehicle_id: str, at: datetime) -> list[Reservation]:
+        """Réservations qui autorisent le véhicule à entrer à l'instant `at` :
+        statut `confirmed` et `start_at <= at < end_at`. Pas de tolérance
+        d'avance ou de retard (hors périmètre du cadrage métier).
+
+        Une réservation encore `pending_payment` sur ce créneau est d'abord
+        mise à jour auprès de Payment : si le suivi en tâche de fond a été
+        interrompu (redémarrage), le client n'est pas bloqué à la barrière
+        alors que son paiement est accepté."""
+        candidates = self._uow.reservations.list_covering(
+            vehicle_id, at, [ReservationStatus.CONFIRMED, ReservationStatus.PENDING_PAYMENT]
+        )
+        valid = []
+        for reservation in candidates:
+            reservation = await self.sync_payment_status(reservation)
+            if reservation.status == ReservationStatus.CONFIRMED:
+                valid.append(reservation)
+        return valid
 
     async def sync_payment_status(self, reservation: Reservation) -> Reservation:
         """Interroge Payment pour une réservation en attente de paiement et

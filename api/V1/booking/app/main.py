@@ -34,8 +34,8 @@ confirmation.
 - **Pricing** calcule le montant d'une réservation.
 - **Payment** encaisse le paiement. Il répond d'abord `PENDING` ; Booking
   l'interroge ensuite (`GET /payments/{id}`) jusqu'à `ACCEPTED` ou `REFUSED`.
-- **Access** interroge Booking pour vérifier qu'un véhicule qui se présente
-  possède une réservation valable.
+- **Access** interroge Booking (`GET /reservations/active`) pour vérifier
+  qu'un véhicule qui se présente possède une réservation valable maintenant.
 - **Messages** reçoit les événements `reservation.confirmed` et
   `reservation.cancelled` pour générer les confirmations/reçus client.
 
@@ -72,7 +72,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="Booking Service",
     description=API_DESCRIPTION,
-    version="0.3.0",
+    version="0.4.0",
     openapi_tags=TAGS_METADATA,
 )
 

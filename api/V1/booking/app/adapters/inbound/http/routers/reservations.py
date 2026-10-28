@@ -1,11 +1,12 @@
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Path
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query
 
 from app.application.reservation_service import ReservationService
 
 from ..dependencies import get_reservation_service, poll_payment_until_final
-from ..schemas import ReservationCreateRequest, ReservationResponse
+from ..schemas import ReservationCheckResponse, ReservationCreateRequest, ReservationResponse, to_utc_naive
 
 router = APIRouter()
 
@@ -70,6 +71,40 @@ def cancel_reservation(
     return reservation_service.cancel_reservation(reservation_id)
 
 
+# Déclarée avant /reservations/{reservation_id} : sinon « active » serait lu
+# comme un code de réservation.
+@router.get(
+    "/reservations/active",
+    summary="Vérifier qu'un véhicule a une réservation valable maintenant (Access)",
+    response_model=ReservationCheckResponse,
+)
+async def check_active_reservation(
+    vehicle_id: str = Query(..., min_length=1, description="Identifiant pseudonymisé fourni par Vehicles."),
+    at: Optional[datetime] = Query(
+        None,
+        description="Instant à vérifier. Par défaut : maintenant. Sans fuseau, la date est lue comme de l'UTC.",
+    ),
+    reservation_service: ReservationService = Depends(get_reservation_service),
+):
+    """Appelé par **Access** quand un véhicule se présente à l'entrée.
+
+    Une réservation est valable si elle est `confirmed` (paiement accepté) et
+    que l'instant vérifié est dans son créneau : `start_at <= at < end_at`.
+    Pas de tolérance d'avance ou de retard (hors périmètre).
+
+    Répond toujours 200 : `valid` dit si l'entrée peut se faire au titre
+    d'une réservation, et `reservations` donne le type de place réservé.
+    """
+    at = to_utc_naive(at) if at is not None else datetime.utcnow()
+    reservations = await reservation_service.find_valid_reservations(vehicle_id, at)
+    return ReservationCheckResponse(
+        vehicle_id=vehicle_id,
+        at=at,
+        valid=bool(reservations),
+        reservations=reservations,
+    )
+
+
 @router.get(
     "/reservations/{reservation_id}",
     summary="Consulter une réservation par son identifiant",
@@ -95,7 +130,8 @@ def list_reservations(
     vehicle_id: Optional[str] = None,
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
-    """Utilisé notamment par le service Access pour vérifier qu'un véhicule
-    qui se présente à l'entrée possède une réservation valable. Sans
-    `vehicle_id`, renvoie toutes les réservations (usage interne/debug)."""
+    """Historique complet des réservations d'un véhicule, tous statuts
+    confondus. Pour décider d'une entrée, Access utilise plutôt
+    `GET /reservations/active`. Sans `vehicle_id`, renvoie toutes les
+    réservations (usage interne/debug)."""
     return reservation_service.list_reservations(vehicle_id)
