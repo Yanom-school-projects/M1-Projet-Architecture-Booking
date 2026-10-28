@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,6 +11,9 @@ BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000").str
 # Large : sur Render gratuit, Booking puis Pricing et Payment peuvent
 # chacun mettre 30 à 60 s à se réveiller.
 TIMEOUT = 180.0
+# Suivi automatique du paiement : toutes les 3 s, pendant 5 min au plus.
+POLL_SECONDS = 3
+POLL_MAX_SECONDS = 300
 # Le client saisit l'heure de Paris ; l'API reçoit la date avec son fuseau
 # et la convertit elle-même en UTC.
 PARIS = ZoneInfo("Europe/Paris")
@@ -73,22 +77,52 @@ if submit:
     else:
         reservation = resp.json()
         st.session_state["reservation_id"] = reservation["id"]
-        st.info(f"Réservation créée — code n° **{reservation['id']}**, en attente de paiement (15 à 30 s)…")
+        st.session_state["followed_since"] = time.monotonic()
+
+
+@st.fragment(run_every=POLL_SECONDS)
+def follow_payment():
+    """Relancé seul toutes les POLL_SECONDS secondes tant que le paiement est
+    en attente. Au statut final, relance toute la page : le fragment n'est
+    plus affiché et l'actualisation s'arrête."""
+    reservation_id = st.session_state["reservation_id"]
+    if time.monotonic() - st.session_state["followed_since"] > POLL_MAX_SECONDS:
+        del st.session_state["reservation_id"]
+        st.session_state["result"] = ("pending", reservation_id, None)
+        st.rerun()
+    try:
+        resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}", timeout=30)
+    except httpx.HTTPError:
+        st.info(f"Réservation n° **{reservation_id}** : statut momentanément indisponible, nouvel essai…")
+        return
+    if resp.status_code != 200:
+        st.error(f"Erreur {resp.status_code} : {resp.text}")
+        return
+    reservation = resp.json()
+    if reservation["status"] == "pending_payment":
+        st.info(f"Réservation n° **{reservation_id}** créée : paiement en cours de validation…")
+        return
+    del st.session_state["reservation_id"]
+    st.session_state["result"] = (reservation["status"], reservation_id, reservation)
+    st.rerun()
+
 
 if "reservation_id" in st.session_state:
-    reservation_id = st.session_state["reservation_id"]
-    resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}", timeout=TIMEOUT)
-    if resp.status_code == 200:
-        reservation = resp.json()
-        st.write("Statut de la réservation :", reservation["status"])
-        if reservation["status"] == "pending_payment":
-            st.button("Rafraîchir le statut")
-        elif reservation["status"] == "confirmed":
-            st.success(f"Réservation confirmée ! Montant : {reservation['price_amount']} €")
-            del st.session_state["reservation_id"]
-        elif reservation["status"] == "failed":
-            st.error("Le paiement a échoué, réservation annulée")
-            del st.session_state["reservation_id"]
+    follow_payment()
+
+if "result" in st.session_state:
+    status, reservation_id, reservation = st.session_state.pop("result")
+    if status == "confirmed":
+        st.success(f"Réservation n° **{reservation_id}** confirmée ! Montant : {reservation['price_amount']} €")
+    elif status == "failed":
+        st.error(f"Réservation n° **{reservation_id}** : le paiement a été refusé, réservation annulée.")
+    elif status == "pending":
+        st.warning(
+            f"Réservation n° **{reservation_id}** : paiement toujours en attente. "
+            "Gardez ce code, le statut sera mis à jour par Booking."
+        )
+    else:
+        st.write(f"Réservation n° **{reservation_id}** : statut {status}")
 
 st.divider()
 st.subheader("Annuler une réservation")
