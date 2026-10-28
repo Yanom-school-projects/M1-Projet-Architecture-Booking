@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 import httpx
 import streamlit as st
 
-BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000")
+# Sans le "/" final : sinon les appels partent vers "//reservations" (404).
+BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000").strip().rstrip("/")
 # Large : sur Render, les services en veille mettent ~30 s à se réveiller.
 TIMEOUT = 90.0
 # Le client saisit l'heure de Paris ; l'API reçoit la date avec son fuseau
