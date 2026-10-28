@@ -16,11 +16,17 @@ class VehiclesPort(ABC):
 
 
 class PricingPort(ABC):
+    async def wake_up(self) -> None:
+        """Réveille le service s'il est en veille. Ne fait rien par défaut."""
+
     @abstractmethod
     async def get_reservation_price(self, place_type: str, start_at: datetime, end_at: datetime) -> PriceQuote: ...
 
 
 class PaymentPort(ABC):
+    async def wake_up(self) -> None:
+        """Réveille le service s'il est en veille. Ne fait rien par défaut."""
+
     @abstractmethod
     async def create_payment(self, amount: Decimal, reference: str, idempotency_key: str) -> PaymentAttempt: ...
 

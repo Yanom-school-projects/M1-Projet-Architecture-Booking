@@ -14,6 +14,8 @@ import httpx
 from app.domain.value_objects import PriceQuote
 from app.ports.external_services import PricingPort
 
+from .wake_up import wake_up
+
 # Types de place de Booking -> zones de Pricing.
 PRICING_ZONES = {
     "standard": "standard",
@@ -29,6 +31,9 @@ class HttpPricingClient(PricingPort):
         self._base_url = base_url.rstrip("/")
         self._headers = {"X-API-Key": api_key} if api_key else {}
         self._timeout = timeout
+
+    async def wake_up(self) -> None:
+        await wake_up(self._base_url, self._timeout)
 
     async def get_reservation_price(self, place_type: str, start_at: datetime, end_at: datetime) -> PriceQuote:
         duration_min = int((end_at - start_at).total_seconds() // 60)

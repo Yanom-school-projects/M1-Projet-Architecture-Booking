@@ -7,8 +7,9 @@ import streamlit as st
 
 # Sans le "/" final : sinon les appels partent vers "//reservations" (404).
 BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000").strip().rstrip("/")
-# Large : sur Render, les services en veille mettent ~30 s à se réveiller.
-TIMEOUT = 90.0
+# Large : sur Render gratuit, Booking puis Pricing et Payment peuvent
+# chacun mettre 30 à 60 s à se réveiller.
+TIMEOUT = 180.0
 # Le client saisit l'heure de Paris ; l'API reçoit la date avec son fuseau
 # et la convertit elle-même en UTC.
 PARIS = ZoneInfo("Europe/Paris")
@@ -49,18 +50,25 @@ if check:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
 
 if submit:
-    resp = httpx.post(
-        f"{BOOKING_API_URL}/reservations",
-        json={
-            "vehicle_plate": plate,
-            "email": email,
-            "place_type": place_type,
-            "start_at": start_at.isoformat(),
-            "end_at": end_at.isoformat(),
-        },
-        timeout=TIMEOUT,
-    )
-    if resp.status_code != 201:
+    try:
+        with st.spinner("Réservation en cours (jusqu'à 1 à 2 min si les services sont en veille)…"):
+            resp = httpx.post(
+                f"{BOOKING_API_URL}/reservations",
+                json={
+                    "vehicle_plate": plate,
+                    "email": email,
+                    "place_type": place_type,
+                    "start_at": start_at.isoformat(),
+                    "end_at": end_at.isoformat(),
+                },
+                timeout=TIMEOUT,
+            )
+    except httpx.TimeoutException:
+        resp = None
+        st.error("Booking n'a pas répondu à temps (services en veille ?). Réessayez dans une minute.")
+    if resp is None:
+        pass
+    elif resp.status_code != 201:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:
         reservation = resp.json()

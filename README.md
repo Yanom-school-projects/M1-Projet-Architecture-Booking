@@ -145,7 +145,7 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 | `CLOUDAMQP_URL`, `EVENT_BUS_EXCHANGE` | Bus d'événements (vide = événements seulement écrits dans les logs) |
 | `PAYMENT_POLL_INTERVAL_SECONDS`, `PAYMENT_POLL_TIMEOUT_SECONDS` | Suivi du paiement (5 s, 180 s) |
 | `PARKING_SYNC_INTERVAL_SECONDS` | Synchronisation avec Parking (3600 s) |
-| `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (30 s) |
+| `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (60 s) |
 | `VEHICLES_FALLBACK_ENABLED` | **Temporaire.** `true` : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule (empreinte de la plaque, préfixe `tmp-`) au lieu de renvoyer 502. `false` par défaut |
 | `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours |
 

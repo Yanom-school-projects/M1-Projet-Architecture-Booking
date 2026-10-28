@@ -6,6 +6,7 @@ httpx, pika ou FastAPI. Les adaptateurs (adapters/) fournissent les
 implémentations concrètes de ces ports, assemblées par
 adapters/inbound/http/dependencies.py."""
 
+import asyncio
 import logging
 import random
 import uuid
@@ -89,7 +90,16 @@ class ReservationService:
         if not available:
             raise CapacityUnavailableError(place_type, start_at)
 
-        vehicle_id = await self._vehicles.resolve_vehicle_id(vehicle_plate)
+        # Réveille Pricing et Payment en même temps, pendant l'appel à
+        # Vehicles : sur Render gratuit, leurs démarrages se chevauchent au
+        # lieu de s'additionner.
+        wake_up = asyncio.gather(self._pricing.wake_up(), self._payment.wake_up())
+        try:
+            vehicle_id = await self._vehicles.resolve_vehicle_id(vehicle_plate)
+        except Exception:
+            wake_up.cancel()
+            raise
+        await wake_up
 
         self._capacity.reserve(place_type, start_at, end_at)
 
