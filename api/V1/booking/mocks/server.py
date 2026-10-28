@@ -6,7 +6,6 @@ PAYMENT_SERVICE_URL vers les vraies URLs (variables d'env, voir .env.example).
 Lancement : uvicorn mocks.server:app --port 9000 --reload
 """
 
-import hashlib
 import logging
 import time
 import uuid
@@ -29,14 +28,50 @@ RATES = {
 }
 
 
-class ResolveVehicleRequest(BaseModel):
-    plate: str
+class VehicleCreateRequest(BaseModel):
+    """Contrat convenu avec l'équipe Vehicles : `code` n'est plus envoyé,
+    Vehicles le génère et le renvoie."""
+
+    licensePlate: str
+    isElectric: bool | None = None
+    isDisabled: bool | None = None
+    isXl: bool | None = None
+    isTwoWheels: bool | None = None
 
 
-@app.post("/vehicles/resolve")
-def resolve_vehicle(payload: ResolveVehicleRequest):
-    vehicle_id = hashlib.sha256(payload.plate.upper().encode()).hexdigest()[:16]
-    return {"vehicle_id": vehicle_id}
+VEHICLES: dict[int, dict] = {}
+CODES_BY_PLATE: dict[str, int] = {}
+
+
+def _vehicle_view(code: int) -> dict:
+    return {"pseudoId": VEHICLES[code]["pseudoId"], "code": code, **VEHICLES[code]["flags"]}
+
+
+@app.post("/vehicles/api/vehicles/identify")
+def identify_vehicle(payload: VehicleCreateRequest):
+    """Une plaque déjà connue renvoie le même `code` ; sinon le véhicule est
+    créé avec un nouveau `code`."""
+    plate = payload.licensePlate.strip().upper()
+    if plate not in CODES_BY_PLATE:
+        code = len(VEHICLES) + 1
+        CODES_BY_PLATE[plate] = code
+        VEHICLES[code] = {
+            "pseudoId": str(uuid.uuid4()),
+            "flags": {
+                "electric": bool(payload.isElectric),
+                "disabled": bool(payload.isDisabled),
+                "xl": bool(payload.isXl),
+                "twoWheels": bool(payload.isTwoWheels),
+            },
+        }
+    return _vehicle_view(CODES_BY_PLATE[plate])
+
+
+@app.get("/vehicles/api/vehicles/{code}")
+def get_vehicle(code: int):
+    if code not in VEHICLES:
+        raise HTTPException(500, "Internal Server Error")
+    return _vehicle_view(code)
 
 
 class QuoteRequest(BaseModel):

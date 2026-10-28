@@ -34,7 +34,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 - [x] Je récupère auprès de Parking le nombre de places proposées à la réservation.
 - [x] Je peux demander le prix à Pricing.
 - [x] Je peux faire payer la réservation avec Payment.
-- [ ] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles (en attente de son URL).
+- [x] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles.
 - [x] Messages est prévenu quand une réservation est confirmée ou annulée.
 - [x] Je peux annuler une réservation confirmée (sans remboursement, extension aux règles métier).
 - [x] Access peut vérifier qu'un véhicule possède une réservation valable maintenant.
@@ -43,7 +43,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 | Service | Sens | Échange | Pourquoi ce mode |
 |---|---|---|---|
-| Vehicles | Booking → Vehicles | `POST /resolve` : plaque → `vehicle_id` | HTTP synchrone : l'identifiant est nécessaire pour continuer |
+| Vehicles | Booking → Vehicles | `POST /api/vehicles/identify` (`licensePlate`) → `code`, la plaque pseudonymisée, stocké comme `vehicle_id` | HTTP synchrone : l'identifiant est nécessaire pour continuer |
 | Pricing | Booking → Pricing | `POST /quote` (zone, `reserved`, durée en minutes) → montant + `quote_id` | HTTP synchrone : le prix est nécessaire avant le paiement |
 | Payment | Booking → Payment | `POST /payments` (centimes, clé d'idempotence), puis `GET /payments/{id}` jusqu'à `ACCEPTED`/`REFUSED` | HTTP + interrogation régulière : Payment tranche en 15 à 30 s et ne rappelle pas |
 | Parking | Booking → Parking | `GET /parking/availability/{catégorie}/booking` au démarrage puis toutes les heures | HTTP : Parking est l'autorité sur le stock |
