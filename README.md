@@ -103,7 +103,7 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 Ou plus simplement avec le front : choisir le type, la date et l'heure (heure de Paris), puis « Réserver ».
 
 À savoir :
-- tant que Vehicles n'a pas d'URL, l'étape 3 renvoie **502** ;
+- tant que Vehicles n'a pas d'URL, l'étape 3 renvoie **502**, sauf si le mode secours est activé (`VEHICLES_FALLBACK_ENABLED=true`, voir Configuration) ;
 - seule la catégorie STANDARD a des places réservables chez Parking pour l'instant ;
 - sur le plan gratuit de Render, le premier appel après une période d'inactivité prend environ 30 s.
 
@@ -146,6 +146,8 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 | `PAYMENT_POLL_INTERVAL_SECONDS`, `PAYMENT_POLL_TIMEOUT_SECONDS` | Suivi du paiement (5 s, 180 s) |
 | `PARKING_SYNC_INTERVAL_SECONDS` | Synchronisation avec Parking (3600 s) |
 | `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (30 s) |
+| `VEHICLES_FALLBACK_ENABLED` | **Temporaire.** `true` : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule (empreinte de la plaque, préfixe `tmp-`) au lieu de renvoyer 502. `false` par défaut |
+| `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours |
 
 ## Déploiement (Render)
 

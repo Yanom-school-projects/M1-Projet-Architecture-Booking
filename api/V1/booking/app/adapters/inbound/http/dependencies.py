@@ -12,6 +12,7 @@ from fastapi import Depends
 from app.adapters.outbound.external_services.payment_client import HttpPaymentClient
 from app.adapters.outbound.external_services.pricing_client import HttpPricingClient
 from app.adapters.outbound.external_services.vehicles_client import HttpVehiclesClient
+from app.adapters.outbound.external_services.vehicles_fallback import FallbackVehiclesClient
 from app.adapters.outbound.messaging.event_publishers import build_event_publisher
 from app.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.application.capacity_service import CapacityService
@@ -19,6 +20,7 @@ from app.application.reservation_service import ReservationService
 from app.config import settings
 from app.domain.enums import ReservationStatus
 from app.domain.exceptions import ReservationNotFoundError
+from app.ports.external_services import VehiclesPort
 from app.ports.unit_of_work import UnitOfWork
 
 logger = logging.getLogger("booking.payment_polling")
@@ -41,11 +43,21 @@ def get_capacity_service(uow: UnitOfWork = Depends(get_unit_of_work)) -> Capacit
     return CapacityService(uow)
 
 
+def build_vehicles_client() -> VehiclesPort:
+    client = HttpVehiclesClient(
+        settings.vehicles_service_url, api_key=settings.vehicles_api_key, timeout=settings.http_timeout_seconds
+    )
+    # TEMPORAIRE : mode secours tant que Vehicles n'est pas disponible.
+    if settings.vehicles_fallback_enabled:
+        return FallbackVehiclesClient(client, secret=settings.vehicles_fallback_secret)
+    return client
+
+
 def build_reservation_service(uow: UnitOfWork) -> ReservationService:
     timeout = settings.http_timeout_seconds
     return ReservationService(
         uow=uow,
-        vehicles=HttpVehiclesClient(settings.vehicles_service_url, api_key=settings.vehicles_api_key, timeout=timeout),
+        vehicles=build_vehicles_client(),
         pricing=HttpPricingClient(settings.pricing_service_url, api_key=settings.pricing_api_key, timeout=timeout),
         payment=HttpPaymentClient(settings.payment_service_url, api_key=settings.payment_api_key, timeout=timeout),
         events=_event_publisher,
