@@ -80,9 +80,35 @@ Suite
 - protéger les routes sensibles par clé d'API ;
 - tests pytest et pipeline CI.
 
+## 28 octobre
+
+Fait
+- **Access** : nouvel endpoint `GET /reservations/active?vehicle_id=...&at=...` (version 0.4.0) :
+  - une réservation est valable si elle est `confirmed` et que l'instant est dans son créneau (`start_at <= at < end_at`) ;
+  - `at` est facultatif (par défaut : maintenant) et accepte une date avec fuseau, comme le reste de l'API ;
+  - réponse toujours 200 : `{vehicle_id, at, valid, reservations}`, avec pour chaque réservation le code, le type de place et le créneau. Access sait donc quel type de place attribuer ;
+  - l'e-mail du client n'est pas renvoyé : Access n'en a pas besoin ;
+  - une réservation encore `pending_payment` sur ce créneau est d'abord revérifiée auprès de Payment. Si le suivi en tâche de fond a été coupé (redémarrage), un client qui a payé n'est pas bloqué à l'entrée ;
+- pas de tolérance d'avance ou de retard : ces cas sont hors périmètre dans le cadrage métier ;
+- `GET /reservations?vehicle_id=...` reste disponible comme historique, mais n'est plus la route indiquée à Access ;
+- testé sur une base temporaire (10 cas) : début du créneau inclus, fin exclue, arrivée en avance, date avec fuseau, réservation annulée ou échouée, paiement accepté entre-temps, paiement toujours en attente, véhicule inconnu ;
+- correctif du front : un `/` final dans `BOOKING_API_URL` faisait appeler `//reservations` (404 `Not Found` sur Render) ;
+- **mode secours temporaire pour Vehicles** (`VEHICLES_FALLBACK_ENABLED=true`) : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule au lieu de renvoyer 502. Ce n'est pas la plaque : c'est une empreinte HMAC-SHA256 préfixée `tmp-`. Désactivé par défaut, à retirer quand Vehicles est branché.
+
+Problèmes
+- le contrat n'est pas encore validé avec l'équipe Access (forme de la réponse, `vehicle_id` ou plaque en entrée) ;
+- la route n'est pas protégée : n'importe qui connaissant un `vehicle_id` peut savoir s'il a une réservation ;
+- les réservations créées en mode secours ont un identifiant `tmp-...` différent de celui que donnera Vehicles : Access ne pourra pas les retrouver.
+
+Suite
+- envoyer le contrat à l'équipe Access et tester avec leur service ;
+- protéger `/reservations/active` par une clé d'API réservée à Access ;
+- supprimer le mode secours Vehicles dès que Vehicles a une URL ;
+- reprendre ces 10 cas dans les tests pytest.
+
 ---
 
-## Point d'étape au 22 octobre (fin de journée)
+## Point d'étape au 28 octobre
 
 ### État par aspect de maturité
 
@@ -92,7 +118,7 @@ Suite
 |---|---|---|
 | Métier | 2 | Capacité dans le temps, créneaux et cycle de vie conformes aux règles. Écart assumé : l'annulation (sans remboursement). |
 | API / Déploiement | 2 | Déployé sur Render, `/health` avec version, Swagger en ligne. Base SQLite non persistante. |
-| Intégration | 2 | Payment, Pricing, Parking et RabbitMQ réels. Il manque Vehicles (pas d'URL) et Access. |
+| Intégration | 2 | Payment, Pricing, Parking et RabbitMQ réels. Endpoint Access prêt, pas encore testé avec leur service. Il manque Vehicles (pas d'URL). |
 | Interface | 2 | Front Streamlit en heure de Paris : disponibilité, réservation, suivi, annulation. |
 | Qualité | 1 | Logs, erreurs propres (422/404/409/502), configuration par variables d'environnement. Aucun test automatisé, pas de `/metrics`. |
 | CI/CD | 1 | Redéploiement automatique sur Render à chaque push sur `main`, mais sans tests. |
@@ -109,13 +135,14 @@ Suite
 - [ ] Je peux obtenir l'identifiant pseudonymisé du véhicule auprès de Vehicles (pas encore d'URL).
 - [x] Messages est prévenu quand une réservation est confirmée ou annulée (événement RabbitMQ).
 - [x] Je peux annuler une réservation confirmée (sans remboursement).
-- [ ] Access peut vérifier qu'un véhicule possède une réservation valable *maintenant*.
+- [x] Access peut vérifier qu'un véhicule possède une réservation valable *maintenant* (`GET /reservations/active`).
 
 ### Reste à faire (par priorité)
 
 **1. Intégration**
 - [ ] Vehicles : renseigner `VEHICLES_SERVICE_URL` et vérifier le contrat (`POST /resolve` → `{vehicle_id}`).
-- [ ] Access : endpoint dédié, par exemple `GET /reservations/active?vehicle_id=...&at=...`, qui ne renvoie que les réservations `confirmed` couvrant l'instant donné.
+- [x] Access : endpoint dédié `GET /reservations/active?vehicle_id=...&at=...`, qui ne renvoie que les réservations `confirmed` couvrant l'instant donné.
+- [ ] Access : faire valider le contrat par l'équipe Access et tester avec leur service.
 - [ ] Parking : savoir si `spot_available` (booking) est un quota ou un nombre de places libres maintenant.
 - [ ] Messages : confirmer le format du champ `event` (`RESERVATION_CONFIRMED`).
 - [ ] Tester le parcours complet en ligne (front Render → Booking → Vehicles/Pricing/Payment → Messages).
