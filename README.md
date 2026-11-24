@@ -52,13 +52,17 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 Correspondance des types de place :
 
-| Booking | Pricing (zone) | Parking (catégorie) |
-|---|---|---|
-| `standard` | `standard` | `STANDARD` |
-| `xl` | `xl` | `XL` |
-| `handicap` | `disabled` | `HANDICAPPED` |
-| `electrique` | `electric` | `ELECTRIC` |
-| `deux_roues` | `two_wheels` | `TWO_WHEELS` |
+Nomenclature commune à tous les microservices : le code est la seule valeur échangée (API, Parking, Pricing,
+événements), sans correspondance propre à un service. Le libellé est affiché dans le front et envoyé à
+Notification (champ `place_type_label` des événements, à côté du code `place_type`).
+
+| Code | Libellé affiché |
+|---|---|
+| `STANDARD` | Standard |
+| `HANDICAPPED` | PMR |
+| `ELECTRIC` | Électrique |
+| `XL` | XL |
+| `TWO_WHEELS` | Deux-roues |
 
 ## Endpoints
 
@@ -85,14 +89,14 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 ### En ligne
 
 1. Ouvrir le Swagger (`/docs`).
-2. `GET /availability` avec `place_type=standard` et un créneau futur sur des heures pleines, par exemple
+2. `GET /availability` avec `place_type=STANDARD` et un créneau futur sur des heures pleines, par exemple
    `start_at=2026-11-02T14:00:00Z` et `end_at=2026-11-02T16:00:00Z`.
 3. `POST /reservations` :
    ```json
    {
      "vehicle_plate": "AB-123-CD",
      "email": "client@example.com",
-     "place_type": "standard",
+     "place_type": "STANDARD",
      "start_at": "2026-11-02T14:00:00Z",
      "end_at": "2026-11-02T16:00:00Z"
    }

@@ -189,7 +189,7 @@ lecture ; `add`/`update` font l'inverse à l'écriture. Le reste du code
 | `id` | `str(6)` | Code à 6 chiffres (`ReservationService._generate_reservation_id`), pas un UUID : c'est la référence que le client communique au parking. Unicité vérifiée via `ReservationRepository.exists`. |
 | `vehicle_id` | `str` | Identifiant pseudonymisé (résolu via Vehicles), jamais la plaque réelle. |
 | `email` | `str` | Email du client, transmis à Messages/Notification à la confirmation. |
-| `place_type` | `PlaceType` | `standard`, `xl`, `handicap`, `electrique`, `deux_roues`. |
+| `place_type` | `PlaceType` | `STANDARD`, `HANDICAPPED`, `ELECTRIC`, `XL`, `TWO_WHEELS` (codes de Parking). Libellés affichés : Standard, PMR, Électrique, XL, Deux-roues (`PlaceType.label`). |
 | `start_at` / `end_at` | `datetime` | Toujours alignés sur une heure pleine (naïfs, UTC). |
 | `status` | `ReservationStatus` | Voir cycle de vie ci-dessous. |
 | `price_amount` | `Decimal` | Renvoyé par Pricing. |
@@ -464,8 +464,8 @@ les trois :
 
 La base démarre vide : tant que rien n'a été poussé via `PUT /capacity`, la
 capacité vaut `0/0` partout (409 attendu). `scripts/seed_capacity.py` pousse
-une capacité par défaut (`standard=10, xl=3, handicap=2, electrique=3,
-deux_roues=5`) sur chaque heure des prochains jours, en attendant que le
+une capacité par défaut (`STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3,
+TWO_WHEELS=5`) sur chaque heure des prochains jours, en attendant que le
 service Parking existe réellement.
 
 ---

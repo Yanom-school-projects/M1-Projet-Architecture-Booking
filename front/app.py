@@ -22,12 +22,19 @@ now_paris = datetime.now(PARIS)
 st.set_page_config(page_title="Réservation parking")
 st.title("Réserver une place de parking")
 
-PLACE_TYPES = ["standard", "xl", "handicap", "electrique", "deux_roues"]
+# Code envoyé à Booking -> libellé affiché au client.
+PLACE_TYPES = {
+    "STANDARD": "Standard",
+    "HANDICAPPED": "PMR",
+    "ELECTRIC": "Électrique",
+    "XL": "XL",
+    "TWO_WHEELS": "Deux-roues",
+}
 
 with st.form("reservation_form"):
     plate = st.text_input("Plaque d'immatriculation", value="AB-123-CD")
     email = st.text_input("Email (pour la confirmation)", value="")
-    place_type = st.selectbox("Type de place", PLACE_TYPES)
+    place_type = st.selectbox("Type de place", list(PLACE_TYPES), format_func=PLACE_TYPES.get)
     date = st.date_input("Date", value=now_paris.date())
     start_hour = st.number_input("Heure de début (heure de Paris)", min_value=0, max_value=23, value=now_paris.hour)
     duration_hours = st.number_input("Durée (heures)", min_value=1, max_value=24 * 7, value=1)
@@ -113,7 +120,10 @@ if "reservation_id" in st.session_state:
 if "result" in st.session_state:
     status, reservation_id, reservation = st.session_state.pop("result")
     if status == "confirmed":
-        st.success(f"Réservation n° **{reservation_id}** confirmée ! Montant : {reservation['price_amount']} €")
+        label = PLACE_TYPES.get(reservation["place_type"], reservation["place_type"])
+        st.success(
+            f"Réservation n° **{reservation_id}** confirmée ! Place {label}, montant : {reservation['price_amount']} €"
+        )
     elif status == "failed":
         st.error(f"Réservation n° **{reservation_id}** : le paiement a été refusé, réservation annulée.")
     elif status == "pending":

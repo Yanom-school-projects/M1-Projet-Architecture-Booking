@@ -7,16 +7,6 @@ import httpx
 from app.domain.enums import PlaceType
 from app.ports.parking import ParkingPort
 
-# Types de place de Booking -> catégories de Parking.
-PARKING_CATEGORIES = {
-    PlaceType.STANDARD: "STANDARD",
-    PlaceType.XL: "XL",
-    PlaceType.HANDICAP: "HANDICAPPED",
-    PlaceType.ELECTRIQUE: "ELECTRIC",
-    PlaceType.DEUX_ROUES: "TWO_WHEELS",
-}
-
-
 class HttpParkingClient(ParkingPort):
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 30.0):
         self._base_url = base_url.rstrip("/")
@@ -24,7 +14,8 @@ class HttpParkingClient(ParkingPort):
         self._timeout = timeout
 
     async def get_booking_capacity(self, place_type: PlaceType) -> int:
-        category = PARKING_CATEGORIES[place_type]
+        # Les codes de Booking sont ceux de Parking : pas de correspondance.
+        category = place_type.value
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
             resp = await client.get(f"{self._base_url}/parking/availability/{category}/booking")
             resp.raise_for_status()

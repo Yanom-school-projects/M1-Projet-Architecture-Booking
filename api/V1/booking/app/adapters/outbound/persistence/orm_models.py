@@ -13,8 +13,8 @@ from .database import Base
 
 
 def _enum_column(enum_cls):
-    # Stocke la value ("standard") plutôt que le name Python ("STANDARD"),
-    # pour que le contenu de la base reste lisible tel quel.
+    # Stocke la value de l'enum (le code partagé, ex. "STANDARD") plutôt que
+    # le name Python : la base contient exactement les codes échangés.
     return Enum(enum_cls, values_callable=lambda e: [member.value for member in e])
 
 

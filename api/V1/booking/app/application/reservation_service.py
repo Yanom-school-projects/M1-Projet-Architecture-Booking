@@ -170,6 +170,7 @@ class ReservationService:
                 "vehicle_id": reservation.vehicle_id,
                 "email": reservation.email,
                 "place_type": reservation.place_type.value,
+                "place_type_label": reservation.place_type.label,
                 "start_at": reservation.start_at.isoformat(),
                 "end_at": reservation.end_at.isoformat(),
             },
@@ -247,6 +248,7 @@ class ReservationService:
                     # Pas de numéro de place : la capacité est gérée par
                     # comptage, l'attribution physique se fait à l'entrée.
                     "place_type": reservation.place_type.value,
+                    "place_type_label": reservation.place_type.label,
                     "start_at": reservation.start_at.isoformat(),
                     "end_at": reservation.end_at.isoformat(),
                     "price_amount": str(reservation.price_amount),

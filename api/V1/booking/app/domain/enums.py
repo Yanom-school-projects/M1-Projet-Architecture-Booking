@@ -4,11 +4,29 @@ import enum
 
 
 class PlaceType(str, enum.Enum):
-    STANDARD = "standard"
-    XL = "xl"
-    HANDICAP = "handicap"
-    ELECTRIQUE = "electrique"
-    DEUX_ROUES = "deux_roues"
+    """Code technique du type de place : c'est la valeur échangée avec les
+    autres services (API, Parking, événements) et stockée en base. Le
+    libellé affiché à l'utilisateur est donné par `label`."""
+
+    STANDARD = "STANDARD"
+    HANDICAPPED = "HANDICAPPED"
+    ELECTRIC = "ELECTRIC"
+    XL = "XL"
+    TWO_WHEELS = "TWO_WHEELS"
+
+    @property
+    def label(self) -> str:
+        return PLACE_TYPE_LABELS[self]
+
+
+# Libellés destinés à l'utilisateur (front, e-mails de Notification).
+PLACE_TYPE_LABELS = {
+    PlaceType.STANDARD: "Standard",
+    PlaceType.HANDICAPPED: "PMR",
+    PlaceType.ELECTRIC: "Électrique",
+    PlaceType.XL: "XL",
+    PlaceType.TWO_WHEELS: "Deux-roues",
+}
 
 
 class ReservationStatus(str, enum.Enum):

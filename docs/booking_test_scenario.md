@@ -39,7 +39,7 @@ cd "api/V1/booking"
 .\.venv\Scripts\python.exe scripts\seed_capacity.py --days 3
 ```
 
-Répartition par défaut : `standard=10, xl=3, handicap=2, electrique=3, deux_roues=5`,
+Répartition par défaut : `STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3, TWO_WHEELS=5`,
 modifiable dans `scripts/seed_capacity.py`. Rejouable sans risque : il ne
 touche que `allocated`, jamais les places déjà réservées (`booked`). Les
 scénarios C, D et F ci-dessous ont volontairement besoin d'une capacité
@@ -52,7 +52,7 @@ que par ce script.
 
 ## A. Happy path via Swagger
 
-1. **`PUT /capacity`** : alloue de la capacité pour tester, ex. `place_type=standard`, `slot_start` = une heure pleine future (aujourd'hui + quelques heures, format `2026-09-02T18:00:00`), `allocated=2`. Refaire pour l'heure suivante si le créneau testé dure 2h.
+1. **`PUT /capacity`** : alloue de la capacité pour tester, ex. `place_type=STANDARD`, `slot_start` = une heure pleine future (aujourd'hui + quelques heures, format `2026-09-02T18:00:00`), `allocated=2`. Refaire pour l'heure suivante si le créneau testé dure 2h.
    ✅ Réponse 200 avec les valeurs envoyées.
 
 2. **`GET /availability`** avec le même `place_type`/`start_at`/`end_at`.

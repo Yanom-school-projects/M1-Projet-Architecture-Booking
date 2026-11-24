@@ -18,13 +18,13 @@ from pydantic import BaseModel
 logger = logging.getLogger("booking.mocks")
 app = FastAPI(title="Mocks: Vehicles / Pricing / Payment")
 
-# Tarifs horaires "reserved" du vrai Pricing, par zone.
+# Tarifs horaires "reserved" du vrai Pricing, par type de place.
 RATES = {
-    "standard": Decimal("2.50"),
-    "xl": Decimal("4.00"),
-    "disabled": Decimal("1.25"),
-    "electric": Decimal("3.00"),
-    "two_wheels": Decimal("0.80"),
+    "STANDARD": Decimal("2.50"),
+    "XL": Decimal("4.00"),
+    "HANDICAPPED": Decimal("1.25"),
+    "ELECTRIC": Decimal("3.00"),
+    "TWO_WHEELS": Decimal("0.80"),
 }
 
 

@@ -15,11 +15,11 @@ import httpx
 
 # Répartition arbitraire pour le dev, à ajuster librement.
 DEFAULT_CAPACITY = {
-    "standard": 10,
-    "xl": 3,
-    "handicap": 2,
-    "electrique": 3,
-    "deux_roues": 5,
+    "STANDARD": 10,
+    "XL": 3,
+    "HANDICAPPED": 2,
+    "ELECTRIC": 3,
+    "TWO_WHEELS": 5,
 }
 
 

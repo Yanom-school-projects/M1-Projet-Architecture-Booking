@@ -1,7 +1,7 @@
 """Implémentation HTTP du port PricingPort, alignée sur le contrat du service
 Pricing (voir son Swagger : /docs).
 
-POST /quote attend une zone (nom de Pricing pour le type de place), le mode
+POST /quote attend une zone (le code du type de place, ex. `STANDARD`), le mode
 `reserved` et une durée en minutes. Il renvoie le montant en euros (texte)
 et un `quote_id`, que Booking conserve comme référence : GET /quotes/{id}
 chez Pricing permet de retrouver la grille et sa version (traçabilité)."""
@@ -15,16 +15,6 @@ from app.domain.value_objects import PriceQuote
 from app.ports.external_services import PricingPort
 
 from .wake_up import wake_up
-
-# Types de place de Booking -> zones de Pricing.
-PRICING_ZONES = {
-    "standard": "standard",
-    "xl": "xl",
-    "handicap": "disabled",
-    "electrique": "electric",
-    "deux_roues": "two_wheels",
-}
-
 
 class HttpPricingClient(PricingPort):
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 30.0):
@@ -40,7 +30,7 @@ class HttpPricingClient(PricingPort):
         async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
             resp = await client.post(
                 f"{self._base_url}/quote",
-                json={"zone": PRICING_ZONES[place_type], "mode": "reserved", "duration_min": duration_min},
+                json={"zone": place_type, "mode": "reserved", "duration_min": duration_min},
             )
             resp.raise_for_status()
             data = resp.json()
