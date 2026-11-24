@@ -3,7 +3,7 @@ identifiant pseudonymisé ; Booking ne conserve jamais la plaque elle-même,
 uniquement ce que Vehicles lui renvoie.
 
 Contrat convenu avec l'équipe Vehicles (28 octobre) :
-POST /api/vehicles/identify, corps `{licensePlate, isElectric, isDisabled,
+POST /api/vehicle/create, corps `{licensePlate, isElectric, isDisabled,
 isXl, isTwoWheels}` → `{code, pseudoId, ...}`. Le `code` est généré par
 Vehicles et sert de plaque pseudonymisée : c'est lui que Booking stocke
 comme `vehicle_id`. Une plaque déjà connue doit renvoyer le même `code`."""
@@ -30,7 +30,7 @@ class HttpVehiclesClient(VehiclesPort):
         try:
             async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
                 resp = await client.post(
-                    f"{self._base_url}/api/vehicles/identify",
+                    f"{self._base_url}/api/vehicle/create",
                     json={
                         "licensePlate": plate,
                         # Booking ne connaît pas les caractéristiques du véhicule.

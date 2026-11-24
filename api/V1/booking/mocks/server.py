@@ -47,8 +47,8 @@ def _vehicle_view(code: int) -> dict:
     return {"pseudoId": VEHICLES[code]["pseudoId"], "code": code, **VEHICLES[code]["flags"]}
 
 
-@app.post("/vehicles/api/vehicles/identify")
-def identify_vehicle(payload: VehicleCreateRequest):
+@app.post("/vehicles/api/vehicle/create")
+def create_vehicle(payload: VehicleCreateRequest):
     """Une plaque déjà connue renvoie le même `code` ; sinon le véhicule est
     créé avec un nouveau `code`."""
     plate = payload.licensePlate.strip().upper()
