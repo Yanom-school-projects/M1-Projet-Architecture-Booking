@@ -43,7 +43,7 @@ class Settings(BaseSettings):
 
     # Timeout des appels HTTP sortants. Large, car un service Render gratuit
     # en veille met 30 à 60 s à se réveiller.
-    http_timeout_seconds: float = 60.0
+    http_timeout_seconds: float = 120.0
 
     reservation_horizon_days: int = 30
     reservation_max_duration_hours: int = 24 * 7
