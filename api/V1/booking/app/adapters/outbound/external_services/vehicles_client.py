@@ -41,7 +41,7 @@ class HttpVehiclesClient(VehiclesPort):
                     },
                 )
                 resp.raise_for_status()
-                code = resp.json()["code"]
+                code = resp.json()
                 if code is None:
                     raise ValueError("code absent de la réponse de Vehicles")
                 return str(code)
