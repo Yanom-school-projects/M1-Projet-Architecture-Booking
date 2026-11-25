@@ -44,5 +44,6 @@ class ReservationModel(Base):
     payment_id = Column(String, nullable=True, index=True)
     # Ajoutée après coup : voir migrations.py pour les bases existantes.
     correlation_id = Column(String(128), nullable=True)
+    payment_idempotency_key = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

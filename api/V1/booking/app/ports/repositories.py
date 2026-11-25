@@ -25,7 +25,12 @@ class ReservationRepository(ABC):
     def update(self, reservation: Reservation) -> None: ...
 
     @abstractmethod
-    def delete(self, reservation_id: str) -> None: ...
+    def set_payment_id(self, reservation_id: str, payment_id: str) -> None:
+        """N'écrit que payment_id : ne doit pas écraser un statut changé entre-temps
+        par un traitement concurrent."""
+
+    # Pas de delete() : une réservation n'est jamais supprimée, pour que son
+    # code ne soit jamais réattribué (il sert de clé d'idempotence chez Payment).
 
     @abstractmethod
     def transition_status(

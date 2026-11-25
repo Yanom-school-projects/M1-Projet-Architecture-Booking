@@ -14,6 +14,7 @@ logger = logging.getLogger("booking.migrations")
 # (table, colonne, type SQL) : types compatibles SQLite et Postgres.
 ADDED_COLUMNS = [
     ("reservations", "correlation_id", "VARCHAR(128)"),
+    ("reservations", "payment_idempotency_key", "VARCHAR(64)"),
 ]
 
 

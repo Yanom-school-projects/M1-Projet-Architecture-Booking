@@ -30,6 +30,9 @@ class Reservation:
     # Identifiant de corrélation de la requête qui a créé la réservation,
     # réutilisé pour chaque étape ultérieure de son parcours.
     correlation_id: Optional[str] = None
+    # Clé d'idempotence de la demande de paiement (booking:{id}:create),
+    # fixée à la création et réutilisée à chaque nouvel essai.
+    payment_idempotency_key: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

@@ -55,3 +55,15 @@ class ReservationIdGenerationError(DomainError):
 
 class ExternalServiceError(DomainError):
     """Un service externe (Vehicles/Pricing/Payment) a échoué ou est injoignable."""
+
+
+class PaymentRejectedError(DomainError):
+    """Payment a répondu et refusé la demande de paiement (422, corps invalide) : on sait
+    avec certitude qu'aucun paiement n'a été créé pour cet essai."""
+
+
+class PaymentOutcomeUnknownError(DomainError):
+    """La demande de paiement a pu être créée chez Payment sans qu'on en ait
+    la réponse (timeout, coupure réseau, 5xx). Ce n'est pas un échec : il
+    faut la renvoyer plus tard avec la même clé d'idempotence, et Payment
+    renverra le paiement existant s'il l'avait créé."""

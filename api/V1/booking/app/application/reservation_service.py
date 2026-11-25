@@ -9,8 +9,8 @@ adapters/inbound/http/dependencies.py."""
 import asyncio
 import logging
 import random
-import uuid
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from app.config import Settings
@@ -21,6 +21,8 @@ from app.domain.exceptions import (
     CapacityUnavailableError,
     ExternalServiceError,
     InvalidReservationStateError,
+    PaymentOutcomeUnknownError,
+    PaymentRejectedError,
     ReservationIdGenerationError,
     ReservationNotFoundError,
 )
@@ -33,6 +35,20 @@ from app.ports.unit_of_work import UnitOfWork
 from .capacity_service import CapacityService
 
 RESERVATION_ID_ATTEMPTS = 20
+
+
+class PaymentRequestOutcome(Enum):
+    CREATED = "created"
+    REJECTED = "rejected"
+    UNKNOWN = "unknown"
+
+
+def payment_idempotency_key(reservation_id: str) -> str:
+    """Clé d'idempotence de la demande de paiement, au format convenu avec
+    Payment : elle identifie l'opération métier (payer cette réservation),
+    pas l'appel HTTP. Identique à chaque nouvel essai ; unique par
+    réservation car un code de réservation n'est jamais réattribué."""
+    return f"booking:{reservation_id}:create"
 
 logger = logging.getLogger("booking.reservations")
 
@@ -135,44 +151,85 @@ class ReservationService:
             status=ReservationStatus.PENDING_PAYMENT,
             correlation_id=get_correlation_id(),
         )
+        reservation.payment_idempotency_key = payment_idempotency_key(reservation.id)
         self._uow.reservations.add(reservation)
 
         try:
             quote = await self._pricing.get_reservation_price(place_type.value, start_at, end_at)
-            reservation.price_amount = quote.amount
-            reservation.price_reference = quote.reference
-
-            # Clé d'idempotence générée une fois pour cette opération : un
-            # retry réseau doit réutiliser la même. Le suffixe aléatoire évite
-            # qu'un code à 6 chiffres réutilisé plus tard (base réinitialisée,
-            # réservation supprimée) retombe sur un ancien paiement.
-            attempt = await self._payment.create_payment(
-                amount=quote.amount,
-                reference=reservation.id,
-                idempotency_key=f"booking-{reservation.id}-{uuid.uuid4().hex[:8]}",
-            )
-            reservation.payment_id = attempt.payment_id
-            self._uow.reservations.update(reservation)
         except Exception as exc:
-            # Pricing ou Payment indisponible : on annule proprement plutôt
-            # que de laisser une réservation bloquée sans paiement associé.
-            logger.error("Échec Pricing/Payment pour la réservation %s : %r", reservation.id, exc)
-            self._capacity.release(place_type, start_at, end_at)
-            self._uow.reservations.delete(reservation.id)
-            self._uow.commit()
-            raise ExternalServiceError("Échec de la préparation du paiement, réservation annulée") from exc
+            # Aucun paiement n'a encore été demandé : échec certain.
+            logger.error("Échec Pricing pour la réservation %s : %r", reservation.id, exc)
+            self._mark_failed(reservation, "tarification impossible")
+            raise ExternalServiceError("Échec de la tarification, réservation annulée") from exc
 
+        reservation.price_amount = quote.amount
+        reservation.price_reference = quote.reference
+        self._uow.reservations.update(reservation)
+        # Validé AVANT d'appeler Payment : si Booking s'arrête pendant l'appel,
+        # la réservation et sa clé existent toujours, et la demande pourra
+        # être renvoyée avec la même clé au lieu de laisser un paiement orphelin.
         self._uow.commit()
         logger.info(
-            "Réservation %s créée : %s du %s au %s, %s EUR, paiement %s en attente",
+            "Réservation %s créée : %s du %s au %s, %s EUR, clé de paiement %s",
             reservation.id,
             place_type.value,
             start_at.isoformat(),
             end_at.isoformat(),
             reservation.price_amount,
-            reservation.payment_id,
+            reservation.payment_idempotency_key,
         )
+
+        if await self._request_payment(reservation) == PaymentRequestOutcome.REJECTED:
+            raise ExternalServiceError("Demande de paiement refusée par Payment, réservation annulée")
         return reservation
+
+    async def _request_payment(self, reservation: Reservation) -> PaymentRequestOutcome:
+        """Demande le paiement à Payment avec la clé d'idempotence de la
+        réservation. Sans risque de double débit : chaque nouvel essai (ici,
+        dans le suivi en tâche de fond ou à la prochaine consultation) envoie
+        la même clé, et Payment renvoie le paiement existant s'il l'a créé.
+
+        - accepté par Payment : payment_id enregistré ;
+        - refusé (422) : réservation en échec, place libérée ;
+        - issue inconnue (timeout, réseau, 5xx, 401, 409) : la réservation reste en
+          attente, la demande sera renvoyée plus tard avec la même clé."""
+        try:
+            attempt = await self._payment.create_payment(
+                amount=reservation.price_amount,
+                reference=reservation.id,
+                idempotency_key=reservation.payment_idempotency_key,
+            )
+        except PaymentRejectedError:
+            self._mark_failed(reservation, "demande de paiement refusée par Payment")
+            return PaymentRequestOutcome.REJECTED
+        except PaymentOutcomeUnknownError:
+            logger.warning(
+                "Réservation %s : issue de la demande de paiement inconnue, nouvel essai plus tard avec la clé %s",
+                reservation.id,
+                reservation.payment_idempotency_key,
+            )
+            return PaymentRequestOutcome.UNKNOWN
+
+        reservation.payment_id = attempt.payment_id
+        self._uow.reservations.set_payment_id(reservation.id, attempt.payment_id)
+        self._uow.commit()
+        logger.info("Réservation %s : paiement %s demandé", reservation.id, attempt.payment_id)
+        return PaymentRequestOutcome.CREATED
+
+    def _mark_failed(self, reservation: Reservation, reason: str) -> bool:
+        """pending_payment -> failed et libère la place. La réservation n'est
+        jamais supprimée : son code reste pris et ne sera pas réattribué, ce
+        qui garantit qu'une clé booking:{id}:create désigne un seul paiement."""
+        changed = self._uow.reservations.transition_status(
+            reservation.id, ReservationStatus.PENDING_PAYMENT, ReservationStatus.FAILED
+        )
+        if changed:
+            self._capacity.release(reservation.place_type, reservation.start_at, reservation.end_at)
+        self._uow.commit()
+        if changed:
+            reservation.status = ReservationStatus.FAILED
+            logger.info("Réservation %s en échec (%s), capacité libérée", reservation.id, reason)
+        return changed
 
     def cancel_reservation(self, reservation_id: str) -> Reservation:
         """Annule une réservation confirmée et libère la capacité, sans
@@ -262,14 +319,24 @@ class ReservationService:
 
         L'appel à Payment, les logs et l'événement portent l'identifiant de
         corrélation de la réservation, même si l'appel vient d'une autre
-        requête (consultation par le client, vérification par Access)."""
-        if reservation.status != ReservationStatus.PENDING_PAYMENT or not reservation.payment_id:
+        requête (consultation par le client, vérification par Access).
+
+        Si la demande de paiement n'a pas encore abouti (issue inconnue lors
+        de la création), elle est d'abord renvoyée avec la même clé."""
+        if reservation.status != ReservationStatus.PENDING_PAYMENT:
             return reservation
         _log_switch_to_reservation(reservation, "Vérification du paiement")
         with correlation_scope(reservation.correlation_id):
             return await self._apply_payment_status(reservation)
 
     async def _apply_payment_status(self, reservation: Reservation) -> Reservation:
+        if not reservation.payment_id:
+            if not reservation.payment_idempotency_key or reservation.price_amount is None:
+                # Créée avant les clés stockées : rien à renvoyer.
+                return reservation
+            if await self._request_payment(reservation) != PaymentRequestOutcome.CREATED:
+                return reservation
+
         try:
             attempt = await self._payment.get_payment(reservation.payment_id)
         except Exception:
@@ -304,16 +371,8 @@ class ReservationService:
                 },
             )
         elif attempt.status == PaymentStatus.REFUSED:
-            changed = self._uow.reservations.transition_status(
-                reservation.id, ReservationStatus.PENDING_PAYMENT, ReservationStatus.FAILED
-            )
-            if not changed:
-                # Déjà traité par un appel concurrent : ne pas libérer la place deux fois.
-                self._uow.commit()
+            if not self._mark_failed(reservation, f"paiement {reservation.payment_id} refusé"):
+                # Déjà traité par un appel concurrent : la place n'est pas libérée deux fois.
                 return self._uow.reservations.get(reservation.id)
-            self._capacity.release(reservation.place_type, reservation.start_at, reservation.end_at)
-            self._uow.commit()
-            reservation.status = ReservationStatus.FAILED
-            logger.info("Réservation %s en échec (paiement %s refusé)", reservation.id, reservation.payment_id)
 
         return reservation

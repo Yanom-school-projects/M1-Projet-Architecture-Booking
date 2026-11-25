@@ -28,7 +28,10 @@ class PaymentPort(ABC):
         """Réveille le service s'il est en veille. Ne fait rien par défaut."""
 
     @abstractmethod
-    async def create_payment(self, amount: Decimal, reference: str, idempotency_key: str) -> PaymentAttempt: ...
+    async def create_payment(self, amount: Decimal, reference: str, idempotency_key: str) -> PaymentAttempt:
+        """Idempotent côté Payment : la même clé renvoie le même paiement.
+        Lève PaymentRejectedError si Payment refuse la demande (aucun paiement
+        créé), PaymentOutcomeUnknownError si on ne sait pas s'il l'a créée."""
 
     @abstractmethod
     async def get_payment(self, payment_id: str) -> PaymentAttempt: ...

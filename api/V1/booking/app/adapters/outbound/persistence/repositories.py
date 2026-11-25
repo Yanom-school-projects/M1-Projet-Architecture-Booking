@@ -26,6 +26,7 @@ def _reservation_to_domain(row: ReservationModel) -> Reservation:
         price_reference=row.price_reference,
         payment_id=row.payment_id,
         correlation_id=row.correlation_id,
+        payment_idempotency_key=row.payment_idempotency_key,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -61,6 +62,7 @@ class SqlAlchemyReservationRepository(ReservationRepository):
             price_reference=reservation.price_reference,
             payment_id=reservation.payment_id,
             correlation_id=reservation.correlation_id,
+            payment_idempotency_key=reservation.payment_idempotency_key,
         )
         self._session.add(row)
         self._session.flush()
@@ -76,10 +78,10 @@ class SqlAlchemyReservationRepository(ReservationRepository):
         self._session.flush()
         reservation.updated_at = row.updated_at
 
-    def delete(self, reservation_id: str) -> None:
-        row = self._session.get(ReservationModel, reservation_id)
-        if row is not None:
-            self._session.delete(row)
+    def set_payment_id(self, reservation_id: str, payment_id: str) -> None:
+        self._session.query(ReservationModel).filter(ReservationModel.id == reservation_id).update(
+            {"payment_id": payment_id, "updated_at": datetime.utcnow()}, synchronize_session=False
+        )
 
     def transition_status(
         self, reservation_id: str, from_status: ReservationStatus, to_status: ReservationStatus
