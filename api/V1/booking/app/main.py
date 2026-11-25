@@ -10,9 +10,11 @@ import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.adapters.inbound.http.correlation_middleware import CorrelationIdMiddleware
+from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
 from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
 from app.adapters.outbound.persistence.database import Base, engine
@@ -107,6 +109,7 @@ async def lifespan(_: FastAPI):
 # Préfixe commun à toutes les routes : /v2/booking/... (version de l'API, puis
 # nom du service, pour un routage par préfixe devant les services).
 API_PREFIX = "/v2/booking"
+METRICS_PATH = f"{API_PREFIX}/metrics"
 
 app = FastAPI(
     lifespan=lifespan,
@@ -118,6 +121,17 @@ app = FastAPI(
 
 register_exception_handlers(app)
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(PrometheusMiddleware, excluded_paths={METRICS_PATH})
+
+
+
+# Sous le préfixe commun, comme les autres routes : côté Prometheus, le job
+# doit donc préciser metrics_path: /v2/booking/metrics (défaut : /metrics).
+# generate_latest() produit le format texte attendu par Prometheus.
+@app.get(METRICS_PATH, include_in_schema=False)
+def metrics() -> Response:
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 app.include_router(health.router, prefix=API_PREFIX, tags=["health"])
 app.include_router(availability.router, prefix=API_PREFIX, tags=["availability"])

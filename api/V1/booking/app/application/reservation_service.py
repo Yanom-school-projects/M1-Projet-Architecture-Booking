@@ -1,7 +1,7 @@
 """Cas d'usage de réservation : création, annulation, suivi du statut de
 paiement. C'est le cœur métier du service Booking, orchestré
 uniquement à travers des ports (UnitOfWork, VehiclesPort, PricingPort,
-PaymentPort, EventPublisher) — aucune ligne ici ne connaît SQLAlchemy,
+PaymentPort, EventPublisher, BusinessMetrics) — aucune ligne ici ne connaît SQLAlchemy,
 httpx, pika ou FastAPI. Les adaptateurs (adapters/) fournissent les
 implémentations concrètes de ces ports, assemblées par
 adapters/inbound/http/dependencies.py."""
@@ -30,6 +30,7 @@ from app.domain.rules import validate_slot
 from app.domain.value_objects import PaymentStatus
 from app.ports.event_publisher import EventPublisher
 from app.ports.external_services import PaymentPort, PricingPort, VehiclesPort
+from app.ports.metrics import BusinessMetrics, NoOpBusinessMetrics, Operation, Result
 from app.ports.unit_of_work import UnitOfWork
 
 from .capacity_service import CapacityService
@@ -71,6 +72,7 @@ class ReservationService:
         payment: PaymentPort,
         events: EventPublisher,
         settings: Settings,
+        metrics: Optional[BusinessMetrics] = None,
     ):
         self._uow = uow
         self._vehicles = vehicles
@@ -78,6 +80,7 @@ class ReservationService:
         self._payment = payment
         self._events = events
         self._settings = settings
+        self._metrics = metrics or NoOpBusinessMetrics()
         self._capacity = CapacityService(uow)
 
     def _publish_event(self, event_type: str, reservation_id: str, payload: dict) -> None:
@@ -105,6 +108,25 @@ class ReservationService:
         raise ReservationIdGenerationError("Impossible de générer un identifiant de réservation unique")
 
     async def create_reservation(
+        self,
+        vehicle_plate: str,
+        email: str,
+        place_type: PlaceType,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> Reservation:
+        """Compte chaque demande : success si la réservation est créée (en
+        attente de paiement), error pour tout refus (créneau invalide, plus de
+        place, service dépendant en panne)."""
+        try:
+            reservation = await self._create_reservation(vehicle_plate, email, place_type, start_at, end_at)
+        except Exception:
+            self._metrics.record(Operation.RESERVATION_CREATE, Result.ERROR)
+            raise
+        self._metrics.record(Operation.RESERVATION_CREATE, Result.SUCCESS)
+        return reservation
+
+    async def _create_reservation(
         self,
         vehicle_plate: str,
         email: str,
@@ -200,7 +222,8 @@ class ReservationService:
                 idempotency_key=reservation.payment_idempotency_key,
             )
         except PaymentRejectedError:
-            self._mark_failed(reservation, "demande de paiement refusée par Payment")
+            if self._mark_failed(reservation, "demande de paiement refusée par Payment"):
+                self._metrics.record(Operation.RESERVATION_PAYMENT, Result.REFUSED)
             return PaymentRequestOutcome.REJECTED
         except PaymentOutcomeUnknownError:
             logger.warning(
@@ -241,7 +264,13 @@ class ReservationService:
             raise ReservationNotFoundError(reservation_id)
         _log_switch_to_reservation(reservation, "Annulation")
         with correlation_scope(reservation.correlation_id):
-            return self._cancel(reservation)
+            try:
+                cancelled = self._cancel(reservation)
+            except Exception:
+                self._metrics.record(Operation.RESERVATION_CANCEL, Result.ERROR)
+                raise
+        self._metrics.record(Operation.RESERVATION_CANCEL, Result.SUCCESS)
+        return cancelled
 
     def _cancel(self, reservation: Reservation) -> Reservation:
         if reservation.status != ReservationStatus.CONFIRMED:
@@ -304,6 +333,7 @@ class ReservationService:
             reservation = await self.sync_payment_status(reservation)
             if reservation.status == ReservationStatus.CONFIRMED:
                 valid.append(reservation)
+        self._metrics.record(Operation.ACCESS_CHECK, Result.VALID if valid else Result.INVALID)
         return valid
 
     async def sync_payment_status(self, reservation: Reservation) -> Reservation:
@@ -352,6 +382,7 @@ class ReservationService:
                 # Déjà traité par un appel concurrent : pas de second événement.
                 return self._uow.reservations.get(reservation.id)
             reservation.status = ReservationStatus.CONFIRMED
+            self._metrics.record(Operation.RESERVATION_PAYMENT, Result.ACCEPTED)
             logger.info("Réservation %s confirmée (paiement %s)", reservation.id, reservation.payment_id)
             self._publish_event(
                 "reservation.confirmed",
@@ -374,5 +405,6 @@ class ReservationService:
             if not self._mark_failed(reservation, f"paiement {reservation.payment_id} refusé"):
                 # Déjà traité par un appel concurrent : la place n'est pas libérée deux fois.
                 return self._uow.reservations.get(reservation.id)
+            self._metrics.record(Operation.RESERVATION_PAYMENT, Result.REFUSED)
 
         return reservation

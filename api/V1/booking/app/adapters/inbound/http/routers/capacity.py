@@ -2,8 +2,10 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Path
 
+from app.adapters.outbound.metrics.prometheus_metrics import business_metrics
 from app.application.capacity_service import CapacityService
 from app.domain.enums import PlaceType
+from app.ports.metrics import Operation, Result
 
 from ..dependencies import get_capacity_service
 from ..schemas import CapacityAllocationRequest, CapacitySlotResponse, to_utc_naive
@@ -39,6 +41,11 @@ def set_capacity_slot(
     touche pas aux places déjà réservées (`booked`) et refuse de descendre
     en dessous de ce nombre.
     """
-    slot = capacity_service.set_allocation(place_type, to_utc_naive(slot_start), payload.allocated)
-    capacity_service.commit()
+    try:
+        slot = capacity_service.set_allocation(place_type, to_utc_naive(slot_start), payload.allocated)
+        capacity_service.commit()
+    except Exception:
+        business_metrics.record(Operation.CAPACITY_UPDATE, Result.ERROR)
+        raise
+    business_metrics.record(Operation.CAPACITY_UPDATE, Result.SUCCESS)
     return slot

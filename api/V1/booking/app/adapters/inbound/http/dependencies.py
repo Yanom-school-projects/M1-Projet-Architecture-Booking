@@ -14,6 +14,7 @@ from app.adapters.outbound.external_services.pricing_client import HttpPricingCl
 from app.adapters.outbound.external_services.vehicles_client import HttpVehiclesClient
 from app.adapters.outbound.external_services.vehicles_fallback import FallbackVehiclesClient
 from app.adapters.outbound.messaging.event_publishers import build_event_publisher
+from app.adapters.outbound.metrics.prometheus_metrics import business_metrics
 from app.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.application.capacity_service import CapacityService
 from app.application.reservation_service import ReservationService
@@ -62,6 +63,7 @@ def build_reservation_service(uow: UnitOfWork) -> ReservationService:
         payment=HttpPaymentClient(settings.payment_service_url, api_key=settings.payment_api_key, timeout=timeout),
         events=_event_publisher,
         settings=settings,
+        metrics=business_metrics,
     )
 
 

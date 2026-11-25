@@ -8,10 +8,12 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 
 from app.adapters.outbound.external_services.parking_client import HttpParkingClient
+from app.adapters.outbound.metrics.prometheus_metrics import business_metrics
 from app.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.application.parking_sync_service import ParkingSyncService
 from app.config import settings
 from app.correlation import correlation_scope, new_correlation_id
+from app.ports.metrics import Operation, Result
 
 logger = logging.getLogger("booking.parking_sync")
 router = APIRouter()
@@ -23,14 +25,21 @@ def _sync_hours() -> int:
 
 
 async def run_parking_sync() -> dict:
+    """Compte chaque synchro (périodique ou manuelle) : des « error » qui
+    s'accumulent signalent que Parking est injoignable ou répond mal."""
     uow = SqlAlchemyUnitOfWork()
     try:
         parking = HttpParkingClient(
             settings.parking_service_url, api_key=settings.parking_api_key, timeout=settings.http_timeout_seconds
         )
-        return await ParkingSyncService(uow, parking).sync(datetime.utcnow(), _sync_hours())
+        result = await ParkingSyncService(uow, parking).sync(datetime.utcnow(), _sync_hours())
+    except Exception:
+        business_metrics.record(Operation.CAPACITY_SYNC, Result.ERROR)
+        raise
     finally:
         uow.close()
+    business_metrics.record(Operation.CAPACITY_SYNC, Result.SUCCESS)
+    return result
 
 
 async def parking_sync_loop() -> None:
