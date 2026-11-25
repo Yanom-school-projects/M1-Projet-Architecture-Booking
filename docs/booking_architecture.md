@@ -24,8 +24,8 @@ l'attribution physique d'une place précise (Parking/Access).
 ```mermaid
 flowchart LR
     Front["Front (Streamlit)"] -->|HTTP| Booking
-    Parking -->|"PUT /capacity"| Booking
-    Access -->|"GET /reservations"| Booking
+    Parking -->|"PUT /v2/booking/capacity-slots/{place_type}/{slot_start}"| Booking
+    Access -->|"GET /v2/booking/reservations/valid"| Booking
     Booking -->|"POST /vehicles/resolve"| Vehicles
     Booking -->|"POST /pricing/reservation"| Pricing
     Booking -->|"POST /payments"| Payment
@@ -208,10 +208,10 @@ stock, pas des places numérotées). `free` (propriété calculée) =
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending_payment: POST /reservations
+    [*] --> pending_payment: POST /v2/booking/reservations
     pending_payment --> confirmed: webhook Payment (paid)
     pending_payment --> failed: webhook Payment (refused/cancelled)
-    confirmed --> cancellation_pending: POST /reservations/{id}/cancel
+    confirmed --> cancellation_pending: POST /v2/booking/reservations/{id}/cancel
     cancellation_pending --> cancelled: webhook Payment (refunded)
     confirmed --> [*]
     failed --> [*]
@@ -280,13 +280,13 @@ lancée. Résumé :
 
 | Méthode | Route | Rôle | Appelée par |
 |---|---|---|---|
-| `GET` | `/health` | Supervision | tous |
-| `GET` | `/availability` | Dispo sur un créneau (lecture seule) | front, tests |
-| `POST` | `/reservations` | Créer une réservation | front (client) |
-| `GET` | `/reservations/{id}` | Consulter une réservation | front, client |
-| `GET` | `/reservations?vehicle_id=` | Lister les réservations d'un véhicule | **Access** |
-| `POST` | `/reservations/{id}/cancel` | Annuler une réservation confirmée (remboursement 50%) | front (client) |
-| `PUT` | `/capacity` | Allouer la capacité réservable d'un créneau | **Parking** |
+| `GET` | `/v2/booking/health` | Supervision | tous |
+| `GET` | `/v2/booking/availability` | Dispo sur un créneau (lecture seule) | front, tests |
+| `POST` | `/v2/booking/reservations` | Créer une réservation | front (client) |
+| `GET` | `/v2/booking/reservations/{id}` | Consulter une réservation | front, client |
+| `GET` | `/v2/booking/reservations?vehicle_id=` | Lister les réservations d'un véhicule | **Access** |
+| `POST` | `/v2/booking/reservations/{id}/cancel` | Annuler une réservation confirmée (remboursement 50%) | front (client) |
+| `PUT` | `/v2/booking/capacity-slots/{place_type}/{slot_start}` | Allouer la capacité réservable d'un créneau | **Parking** |
 | `POST` | `/webhooks/payment` | Callback asynchrone de statut de paiement/remboursement | **Payment** |
 
 ---
@@ -305,7 +305,7 @@ sequenceDiagram
     participant Pa as PaymentPort
     participant U as UnitOfWork
 
-    C->>R: POST /reservations
+    C->>R: POST /v2/booking/reservations
     R->>S: create_reservation(...)
     S->>S: validate_slot() [domain/rules.py]
     S->>U: check_availability / reserve
@@ -462,7 +462,7 @@ les trois :
   déclenche immédiatement le webhook avec le statut demandé (`paid`,
   `refused`, `cancelled`, `refunded`).
 
-La base démarre vide : tant que rien n'a été poussé via `PUT /capacity`, la
+La base démarre vide : tant que rien n'a été poussé via `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}`, la
 capacité vaut `0/0` partout (409 attendu). `scripts/seed_capacity.py` pousse
 une capacité par défaut (`STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3,
 TWO_WHEELS=5`) sur chaque heure des prochains jours, en attendant que le

@@ -30,16 +30,18 @@ Le service **Booking** gère la disponibilité future du parking et le cycle de 
 d'une réservation : recherche de créneau, tarification, paiement anticipé et
 confirmation.
 
+Toutes les routes sont préfixées par `/v2/booking` (ex. `POST /v2/booking/reservations`).
+
 ### Rôle dans le système
 - **Parking** indique combien de places de chaque type sont proposées à la
   réservation : Booking le lit au démarrage puis toutes les heures
-  (`POST /capacity/sync` pour forcer). `PUT /capacity` permet aussi d'ajuster
+  (`POST /capacity-slots/sync` pour forcer). `PUT /capacity-slots/{type}/{heure}` permet aussi d'ajuster
   un créneau précis.
 - **Vehicles** résout la plaque du client en identifiant pseudonymisé.
 - **Pricing** calcule le montant d'une réservation.
 - **Payment** encaisse le paiement. Il répond d'abord `PENDING` ; Booking
   l'interroge ensuite (`GET /payments/{id}`) jusqu'à `ACCEPTED` ou `REFUSED`.
-- **Access** interroge Booking (`GET /reservations/active`) pour vérifier
+- **Access** interroge Booking (`GET /reservations/valid`) pour vérifier
   qu'un véhicule qui se présente possède une réservation valable maintenant.
 - **Messages** reçoit les événements `reservation.confirmed` et
   `reservation.cancelled` pour générer les confirmations/reçus client.
@@ -60,7 +62,7 @@ TAGS_METADATA = [
     {"name": "health", "description": "Supervision : vérifie que le service répond."},
     {"name": "availability", "description": "Consultation de la capacité réservable, sans effet de bord métier."},
     {"name": "reservations", "description": "Création et consultation des réservations d'une place de parking."},
-    {"name": "capacity", "description": "Allocation de la capacité réservable par créneau. Appelé par le service Parking."},
+    {"name": "capacity", "description": "Places réservables par créneau horaire : synchronisation depuis Parking et ajustement d'un créneau."},
 ]
 
 logger = logging.getLogger("booking.startup")
@@ -86,7 +88,7 @@ def _log_startup_config() -> None:
     if not settings.cloudamqp_url:
         logger.warning("CLOUDAMQP_URL vide : les événements ne sont PAS envoyés à Messages, seulement logués")
     if not settings.parking_service_url:
-        logger.warning("PARKING_SERVICE_URL vide : pas de synchro de capacité, seul PUT /capacity l'alimente")
+        logger.warning("PARKING_SERVICE_URL vide : pas de synchro de capacité, seul PUT /capacity-slots l'alimente")
     if settings.vehicles_fallback_enabled:
         logger.warning("TEMPORAIRE : secours Vehicles activé, identifiants calculés par Booking si Vehicles tombe")
 
@@ -102,6 +104,10 @@ async def lifespan(_: FastAPI):
         task.cancel()
 
 
+# Préfixe commun à toutes les routes : /v2/booking/... (version de l'API, puis
+# nom du service, pour un routage par préfixe devant les services).
+API_PREFIX = "/v2/booking"
+
 app = FastAPI(
     lifespan=lifespan,
     title="Booking Service",
@@ -113,8 +119,8 @@ app = FastAPI(
 register_exception_handlers(app)
 app.add_middleware(CorrelationIdMiddleware)
 
-app.include_router(health.router, tags=["health"])
-app.include_router(availability.router, tags=["availability"])
-app.include_router(reservations.router, tags=["reservations"])
-app.include_router(capacity.router, tags=["capacity"])
-app.include_router(parking_sync.router, tags=["capacity"])
+app.include_router(health.router, prefix=API_PREFIX, tags=["health"])
+app.include_router(availability.router, prefix=API_PREFIX, tags=["availability"])
+app.include_router(reservations.router, prefix=API_PREFIX, tags=["reservations"])
+app.include_router(capacity.router, prefix=API_PREFIX, tags=["capacity"])
+app.include_router(parking_sync.router, prefix=API_PREFIX, tags=["capacity"])

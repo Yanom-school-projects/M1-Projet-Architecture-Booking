@@ -1,33 +1,44 @@
-from fastapi import APIRouter, Depends
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, Path
 
 from app.application.capacity_service import CapacityService
+from app.domain.enums import PlaceType
 
 from ..dependencies import get_capacity_service
-from ..schemas import CapacityAllocationRequest
+from ..schemas import CapacityAllocationRequest, CapacitySlotResponse, to_utc_naive
 
 router = APIRouter()
 
 
 @router.put(
-    "/capacity",
-    summary="Allouer la capacité réservable d'un créneau",
-    response_description="L'état de la capacité après application de l'allocation.",
+    "/capacity-slots/{place_type}/{slot_start}",
+    summary="Fixer le nombre de places réservables d'un créneau horaire",
+    response_model=CapacitySlotResponse,
+    response_description="L'état du créneau après application de l'allocation.",
     responses={
         409: {"description": "Allocation inférieure au nombre de places déjà réservées sur ce créneau."},
         422: {"description": "slot_start n'est pas une heure pleine, ou allocated est négatif."},
     },
 )
-def set_capacity(
+def set_capacity_slot(
     payload: CapacityAllocationRequest,
+    place_type: PlaceType = Path(..., description="Type de place concerné."),
+    slot_start: datetime = Path(
+        ...,
+        description="Heure pleine du créneau, ex. `2026-11-26T09:00:00`. Sans fuseau, la date est lue comme de l'UTC.",
+    ),
     capacity_service: CapacityService = Depends(get_capacity_service),
 ):
-    """Appelé par le service **Parking** pour indiquer combien de places d'un
-    type donné sont mises à disposition de Booking sur un créneau horaire.
+    """Indique combien de places d'un type donné sont mises à disposition de
+    Booking sur un créneau d'une heure. En temps normal, cette valeur vient
+    de la synchronisation avec **Parking** (`POST /capacity-slots/sync`) ;
+    cette route sert à ajuster un créneau précis (tests, correction manuelle).
 
-    Remplace la valeur allouée précédente pour ce créneau (opération
-    idempotente) ; n'affecte pas les places déjà réservées (`booked`) et
-    refuse de descendre en dessous de ce nombre.
+    Remplace la valeur précédente du créneau (opération idempotente) ; ne
+    touche pas aux places déjà réservées (`booked`) et refuse de descendre
+    en dessous de ce nombre.
     """
-    slot = capacity_service.set_allocation(payload.place_type, payload.slot_start, payload.allocated)
+    slot = capacity_service.set_allocation(place_type, to_utc_naive(slot_start), payload.allocated)
     capacity_service.commit()
-    return {"place_type": slot.place_type, "slot_start": slot.slot_start, "allocated": slot.allocated}
+    return slot

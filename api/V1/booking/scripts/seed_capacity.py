@@ -1,5 +1,5 @@
 """Seed de la capacité réservable pour le dev/test local, en attendant que le
-vrai service Parking (qui pousse normalement ces allocations via PUT /capacity)
+vrai service Parking (source normale de ces allocations, via POST /v2/booking/capacity-slots/sync)
 soit disponible. Alloue une capacité horaire, pour chaque type de place, sur
 les prochains jours.
 
@@ -33,12 +33,8 @@ def seed(api_url: str, days: int) -> None:
             slot_start = start_hour + timedelta(hours=h)
             for place_type, allocated in DEFAULT_CAPACITY.items():
                 resp = client.put(
-                    f"{api_url}/capacity",
-                    json={
-                        "place_type": place_type,
-                        "slot_start": slot_start.isoformat(),
-                        "allocated": allocated,
-                    },
+                    f"{api_url}/v2/booking/capacity-slots/{place_type}/{slot_start.isoformat()}",
+                    json={"allocated": allocated},
                 )
                 resp.raise_for_status()
 

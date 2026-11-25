@@ -71,10 +71,10 @@ def cancel_reservation(
     return reservation_service.cancel_reservation(reservation_id)
 
 
-# Déclarée avant /reservations/{reservation_id} : sinon « active » serait lu
-# comme un code de réservation.
+# Déclarée avant /reservations/{reservation_id} : sinon « valid » serait pris
+# pour un code de réservation (et refusé en 422).
 @router.get(
-    "/reservations/active",
+    "/reservations/valid",
     summary="Vérifier qu'un véhicule a une réservation valable maintenant (Access)",
     response_model=ReservationCheckResponse,
 )
@@ -132,6 +132,6 @@ def list_reservations(
 ):
     """Historique complet des réservations d'un véhicule, tous statuts
     confondus. Pour décider d'une entrée, Access utilise plutôt
-    `GET /reservations/active`. Sans `vehicle_id`, renvoie toutes les
+    `GET /v2/booking/reservations/valid`. Sans `vehicle_id`, renvoie toutes les
     réservations (usage interne/debug)."""
     return reservation_service.list_reservations(vehicle_id)

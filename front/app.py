@@ -47,7 +47,7 @@ end_at = start_at + timedelta(hours=int(duration_hours))
 
 if check:
     resp = httpx.get(
-        f"{BOOKING_API_URL}/availability",
+        f"{BOOKING_API_URL}/v2/booking/availability",
         params={"place_type": place_type, "start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
         timeout=TIMEOUT,
     )
@@ -64,7 +64,7 @@ if submit:
     try:
         with st.spinner("Réservation en cours (jusqu'à 1 à 2 min si les services sont en veille)…"):
             resp = httpx.post(
-                f"{BOOKING_API_URL}/reservations",
+                f"{BOOKING_API_URL}/v2/booking/reservations",
                 json={
                     "vehicle_plate": plate,
                     "email": email,
@@ -98,7 +98,7 @@ def follow_payment():
         st.session_state["result"] = ("pending", reservation_id, None)
         st.rerun()
     try:
-        resp = httpx.get(f"{BOOKING_API_URL}/reservations/{reservation_id}", timeout=30)
+        resp = httpx.get(f"{BOOKING_API_URL}/v2/booking/reservations/{reservation_id}", timeout=30)
     except httpx.HTTPError:
         st.info(f"Réservation n° **{reservation_id}** : statut momentanément indisponible, nouvel essai…")
         return
@@ -143,7 +143,7 @@ with st.form("cancel_form"):
     cancel_submit = st.form_submit_button("Annuler la réservation")
 
 if cancel_submit:
-    resp = httpx.post(f"{BOOKING_API_URL}/reservations/{cancel_id}/cancel", timeout=TIMEOUT)
+    resp = httpx.post(f"{BOOKING_API_URL}/v2/booking/reservations/{cancel_id}/cancel", timeout=TIMEOUT)
     if resp.status_code != 200:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:

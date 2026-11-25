@@ -50,7 +50,7 @@ async def parking_sync_loop() -> None:
 
 
 @router.post(
-    "/capacity/sync",
+    "/capacity-slots/sync",
     summary="Synchroniser la capacité réservable depuis Parking",
     response_description="Nombre de places appliqué par type de place.",
     responses={503: {"description": "PARKING_SERVICE_URL n'est pas configurée."}},

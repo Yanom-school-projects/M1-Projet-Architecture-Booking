@@ -14,7 +14,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 ## Version
 
-**0.4.0**, renvoyée par `GET /health`.
+**0.4.0**, renvoyée par `GET /v2/booking/health`.
 
 ## URL
 
@@ -47,7 +47,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 | Pricing | Booking → Pricing | `POST /quote` (zone, `reserved`, durée en minutes) → montant + `quote_id` | HTTP synchrone : le prix est nécessaire avant le paiement |
 | Payment | Booking → Payment | `POST /payments` (centimes, clé d'idempotence), puis `GET /payments/{id}` jusqu'à `ACCEPTED`/`REFUSED` | HTTP + interrogation régulière : Payment tranche en 15 à 30 s et ne rappelle pas |
 | Parking | Booking → Parking | `GET /parking/availability/{catégorie}/booking` au démarrage puis toutes les heures | HTTP : Parking est l'autorité sur le stock |
-| Access | Access → Booking | `GET /reservations/active?vehicle_id=...` → `valid` + type de place réservé | HTTP synchrone : Access doit décider de l'entrée |
+| Access | Access → Booking | `GET /v2/booking/reservations/valid?vehicle_id=...` → `valid` + type de place réservé | HTTP synchrone : Access doit décider de l'entrée |
 | Messages | Booking → bus | événements `booking.confirmed` et `booking.cancelled` (RabbitMQ, exchange `microservice-event-bus`) | Asynchrone : Booking annonce un fait sans attendre |
 
 Correspondance des types de place :
@@ -68,15 +68,15 @@ Notification (champ `place_type_label` des événements, à côté du code `plac
 
 | Méthode | Route | Rôle |
 |---|---|---|
-| GET | `/health` | État et version du service |
-| GET | `/availability?place_type=&start_at=&end_at=` | Places libres sur un créneau |
-| POST | `/reservations` | Créer une réservation (réponse `pending_payment`) |
-| GET | `/reservations/{id}` | Suivre une réservation (`pending_payment` → `confirmed` / `failed`) |
-| GET | `/reservations/active?vehicle_id=&at=` | Réservation valable à un instant donné, par défaut maintenant (utilisé par Access) |
-| GET | `/reservations?vehicle_id=` | Historique des réservations d'un véhicule |
-| POST | `/reservations/{id}/cancel` | Annuler une réservation confirmée |
-| PUT | `/capacity` | Ajuster la capacité d'un créneau précis |
-| POST | `/capacity/sync` | Relancer la synchronisation de capacité avec Parking |
+| GET | `/v2/booking/health` | État et version du service |
+| GET | `/v2/booking/availability?place_type=&start_at=&end_at=` | Places libres sur un créneau |
+| POST | `/v2/booking/reservations` | Créer une réservation (réponse `pending_payment`) |
+| GET | `/v2/booking/reservations/{id}` | Suivre une réservation (`pending_payment` → `confirmed` / `failed`) |
+| GET | `/v2/booking/reservations/valid?vehicle_id=&at=` | Réservation valable à un instant donné, par défaut maintenant (utilisé par Access) |
+| GET | `/v2/booking/reservations?vehicle_id=` | Historique des réservations d'un véhicule |
+| POST | `/v2/booking/reservations/{id}/cancel` | Annuler une réservation confirmée |
+| PUT | `/v2/booking/capacity-slots/{place_type}/{slot_start}` | Ajuster la capacité d'un créneau précis |
+| POST | `/v2/booking/capacity-slots/sync` | Relancer la synchronisation de capacité avec Parking |
 
 Toutes les dates sont en **UTC**. Une date envoyée avec un fuseau (`2026-11-02T14:00:00+01:00`) est
 convertie, une date sans fuseau est lue comme de l'UTC, et les réponses se terminent par `Z`.
@@ -89,9 +89,9 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 ### En ligne
 
 1. Ouvrir le Swagger (`/docs`).
-2. `GET /availability` avec `place_type=STANDARD` et un créneau futur sur des heures pleines, par exemple
+2. `GET /v2/booking/availability` avec `place_type=STANDARD` et un créneau futur sur des heures pleines, par exemple
    `start_at=2026-11-02T14:00:00Z` et `end_at=2026-11-02T16:00:00Z`.
-3. `POST /reservations` :
+3. `POST /v2/booking/reservations` :
    ```json
    {
      "vehicle_plate": "AB-123-CD",
@@ -102,7 +102,7 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
    }
    ```
    La réponse a le statut `pending_payment` et un code à 6 chiffres.
-4. Après 15 à 30 s, `GET /reservations/{code}` renvoie `confirmed` (ou `failed` si Payment refuse, environ 5 % des cas).
+4. Après 15 à 30 s, `GET /v2/booking/reservations/{code}` renvoie `confirmed` (ou `failed` si Payment refuse, environ 5 % des cas).
 
 Ou plus simplement avec le front : choisir le type, la date et l'heure (heure de Paris), puis « Réserver ».
 
@@ -160,7 +160,7 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 | Root Directory | `api/V1/booking` | `front` |
 | Build Command | `pip install -r requirements.txt` | `pip install -r requirements.txt` |
 | Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `streamlit run app.py --server.port $PORT --server.address 0.0.0.0` |
-| Health Check | `/health` | — |
+| Health Check | `/v2/booking/health` | — |
 
 Chaque push sur `main` redéploie les deux services.
 

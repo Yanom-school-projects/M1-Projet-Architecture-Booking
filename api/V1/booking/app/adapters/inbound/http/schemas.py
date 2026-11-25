@@ -117,12 +117,19 @@ class ReservationCheckResponse(BaseModel):
 
 
 class CapacityAllocationRequest(BaseModel):
-    """Allocation de capacité réservable pour un créneau, poussée par le service Parking."""
+    """Nombre de places réservables à fixer pour le créneau désigné dans l'URL."""
 
-    place_type: PlaceType = Field(..., description="Type de place concerné.")
-    slot_start: UtcDatetime = Field(
-        ..., description="Heure pleine du créneau concerné. Sans fuseau, la date est lue comme de l'UTC."
-    )
     allocated: int = Field(
         ..., ge=0, description="Nombre total de places de ce type allouées à Booking sur ce créneau."
     )
+
+
+class CapacitySlotResponse(BaseModel):
+    """État d'un créneau horaire de capacité réservable."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    place_type: PlaceType = Field(..., description="Type de place concerné.")
+    slot_start: UtcDatetimeOut = Field(..., description="Début du créneau d'une heure (UTC).")
+    allocated: int = Field(..., description="Places de ce type mises à disposition de Booking sur ce créneau.")
+    booked: int = Field(..., description="Places déjà réservées sur ce créneau.")
