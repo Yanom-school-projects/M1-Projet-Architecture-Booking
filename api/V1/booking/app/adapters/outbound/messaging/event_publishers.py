@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 import pika
 
+from app.correlation import CORRELATION_HEADER, get_correlation_id, new_correlation_id
 from app.ports.event_publisher import EventPublisher
 
 logger = logging.getLogger("booking.events")
@@ -53,6 +54,10 @@ class RabbitMQEventPublisher(EventPublisher):
     def publish(self, event_type: str, payload: Mapping[str, Any]) -> None:
         routing_key = self.ROUTING_KEYS.get(event_type, f"booking.{event_type}")
         body = {"event": event_type.upper().replace(".", "_"), **payload}
+        # Identifiant de corrélation transmis hors du corps, pour ne pas
+        # changer le format convenu avec Messages : propriété AMQP standard
+        # `correlation_id` et en-tête X-Correlation-ID, au choix du consommateur.
+        cid = get_correlation_id() or new_correlation_id()
 
         connection = pika.BlockingConnection(pika.URLParameters(self._amqp_url))
         try:
@@ -65,7 +70,11 @@ class RabbitMQEventPublisher(EventPublisher):
                 exchange=self._exchange,
                 routing_key=routing_key,
                 body=json.dumps(body),
-                properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent),
+                properties=pika.BasicProperties(
+                    delivery_mode=pika.DeliveryMode.Persistent,
+                    correlation_id=cid,
+                    headers={CORRELATION_HEADER: cid},
+                ),
             )
             # Pas de corps complet dans le log : il contient l'email du client.
             logger.info(

@@ -15,6 +15,8 @@ import httpx
 from app.domain.exceptions import ExternalServiceError
 from app.ports.external_services import VehiclesPort
 
+from .http_client import http_client
+
 logger = logging.getLogger("booking.vehicles")
 
 
@@ -28,7 +30,7 @@ class HttpVehiclesClient(VehiclesPort):
         if not self._base_url:
             raise ExternalServiceError("Service Vehicles non configuré (VEHICLES_SERVICE_URL vide)")
         try:
-            async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
+            async with http_client(self._timeout, self._headers) as client:
                 resp = await client.post(
                     f"{self._base_url}/api/vehicle/create",
                     json={

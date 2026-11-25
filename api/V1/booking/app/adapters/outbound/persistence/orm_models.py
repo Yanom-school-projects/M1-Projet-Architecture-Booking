@@ -42,5 +42,7 @@ class ReservationModel(Base):
     price_amount = Column(Numeric(10, 2), nullable=True)
     price_reference = Column(String, nullable=True)
     payment_id = Column(String, nullable=True, index=True)
+    # Ajoutée après coup : voir migrations.py pour les bases existantes.
+    correlation_id = Column(String(128), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

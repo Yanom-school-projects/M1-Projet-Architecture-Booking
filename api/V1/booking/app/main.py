@@ -12,15 +12,18 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 
+from app.adapters.inbound.http.correlation_middleware import CorrelationIdMiddleware
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
 from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
 from app.adapters.outbound.persistence.database import Base, engine
+from app.adapters.outbound.persistence.migrations import add_missing_columns
 from app.config import settings
 from app.logging_config import setup_logging
 
 setup_logging()
 
 Base.metadata.create_all(bind=engine)
+add_missing_columns(engine)
 
 API_DESCRIPTION = """
 Le service **Booking** gère la disponibilité future du parking et le cycle de vie
@@ -108,6 +111,7 @@ app = FastAPI(
 )
 
 register_exception_handlers(app)
+app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(health.router, tags=["health"])
 app.include_router(availability.router, tags=["availability"])

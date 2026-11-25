@@ -8,9 +8,20 @@ import sys
 from logging.handlers import TimedRotatingFileHandler
 
 from app.config import settings
+from app.correlation import get_correlation_id
 
-LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(correlation_id)s | %(name)s | %(message)s"
 LOG_FILE_NAME = "booking.log"
+
+
+class CorrelationIdFilter(logging.Filter):
+    """Ajoute l'identifiant de corrélation courant à chaque ligne de log
+    (« - » hors requête : démarrage, tâches sans parcours associé). Posé sur
+    les handlers, il s'applique aussi aux logs d'uvicorn et des librairies."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.correlation_id = get_correlation_id() or "-"
+        return True
 
 
 def _daily_file_handler(formatter: logging.Formatter) -> logging.Handler | None:
@@ -43,7 +54,7 @@ def setup_logging() -> None:
     - Niveau de log configurable par variable d'environnement LOG_LEVEL.
     - Log vers la console (Render) et vers un fichier journalier (LOG_DIR,
       vide = console uniquement).
-    - Format : timestamp | niveau | logger | message
+    - Format : timestamp | niveau | correlation_id | logger | message
     """
     formatter = logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -55,6 +66,10 @@ def setup_logging() -> None:
         file_handler = _daily_file_handler(formatter)
         if file_handler:
             handlers.append(file_handler)
+
+    correlation_filter = CorrelationIdFilter()
+    for handler in handlers:
+        handler.addFilter(correlation_filter)
 
     root = logging.getLogger()
     root.handlers[:] = handlers

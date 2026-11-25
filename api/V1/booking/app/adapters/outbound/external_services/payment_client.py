@@ -14,6 +14,7 @@ import httpx
 from app.domain.value_objects import PaymentAttempt
 from app.ports.external_services import PaymentPort
 
+from .http_client import http_client
 from .wake_up import wake_up
 
 logger = logging.getLogger("booking.payment")
@@ -43,7 +44,7 @@ class HttpPaymentClient(PaymentPort):
             "reference": {"type": "BOOKING", "id": reference},
             "source_service": "booking",
         }
-        async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
+        async with http_client(self._timeout, self._headers) as client:
             try:
                 resp = await client.post(f"{self._base_url}/payments", json=body)
             except httpx.TimeoutException:
@@ -57,7 +58,7 @@ class HttpPaymentClient(PaymentPort):
             return PaymentAttempt(payment_id=data["payment_id"], status=data["status"])
 
     async def get_payment(self, payment_id: str) -> PaymentAttempt:
-        async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
+        async with http_client(self._timeout, self._headers) as client:
             resp = await client.get(f"{self._base_url}/payments/{payment_id}")
             resp.raise_for_status()
             data = resp.json()

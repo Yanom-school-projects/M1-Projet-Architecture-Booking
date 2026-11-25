@@ -9,11 +9,10 @@ chez Pricing permet de retrouver la grille et sa version (traçabilité)."""
 from datetime import datetime
 from decimal import Decimal
 
-import httpx
-
 from app.domain.value_objects import PriceQuote
 from app.ports.external_services import PricingPort
 
+from .http_client import http_client
 from .wake_up import wake_up
 
 class HttpPricingClient(PricingPort):
@@ -27,7 +26,7 @@ class HttpPricingClient(PricingPort):
 
     async def get_reservation_price(self, place_type: str, start_at: datetime, end_at: datetime) -> PriceQuote:
         duration_min = int((end_at - start_at).total_seconds() // 60)
-        async with httpx.AsyncClient(timeout=self._timeout, headers=self._headers) as client:
+        async with http_client(self._timeout, self._headers) as client:
             resp = await client.post(
                 f"{self._base_url}/quote",
                 json={"zone": place_type, "mode": "reserved", "duration_min": duration_min},

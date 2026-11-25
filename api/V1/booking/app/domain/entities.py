@@ -27,6 +27,9 @@ class Reservation:
     price_amount: Optional[Decimal] = None
     price_reference: Optional[str] = None
     payment_id: Optional[str] = None
+    # Identifiant de corrélation de la requête qui a créé la réservation,
+    # réutilisé pour chaque étape ultérieure de son parcours.
+    correlation_id: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

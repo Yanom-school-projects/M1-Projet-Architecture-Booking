@@ -11,6 +11,7 @@ from app.adapters.outbound.external_services.parking_client import HttpParkingCl
 from app.adapters.outbound.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from app.application.parking_sync_service import ParkingSyncService
 from app.config import settings
+from app.correlation import correlation_scope, new_correlation_id
 
 logger = logging.getLogger("booking.parking_sync")
 router = APIRouter()
@@ -38,10 +39,13 @@ async def parking_sync_loop() -> None:
     d'offre de Parking. Sur Render (plan gratuit), la base est vidée à chaque
     redémarrage : cette synchro la remplit à nouveau automatiquement."""
     while True:
-        try:
-            await run_parking_sync()
-        except Exception:
-            logger.exception("Échec de la synchronisation de capacité avec Parking")
+        # Hors requête HTTP : un identifiant de corrélation par synchro, pour
+        # relier nos logs à ceux de Parking.
+        with correlation_scope(new_correlation_id()):
+            try:
+                await run_parking_sync()
+            except Exception:
+                logger.exception("Échec de la synchronisation de capacité avec Parking")
         await asyncio.sleep(settings.parking_sync_interval_seconds)
 
 

@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Optional
 
 from app.config import Settings
+from app.correlation import correlation_scope, get_correlation_id
 from app.domain.entities import Reservation
 from app.domain.enums import PlaceType, ReservationStatus
 from app.domain.exceptions import (
@@ -34,6 +35,15 @@ from .capacity_service import CapacityService
 RESERVATION_ID_ATTEMPTS = 20
 
 logger = logging.getLogger("booking.reservations")
+
+
+def _log_switch_to_reservation(reservation: Reservation, action: str) -> None:
+    """Quand une requête agit sur une réservation créée par une autre, les
+    logs qui suivent passent sur l'identifiant de la réservation : cette ligne,
+    écrite avec l'identifiant de la requête, fait le lien entre les deux."""
+    current = get_correlation_id()
+    if reservation.correlation_id and current and current != reservation.correlation_id:
+        logger.info("%s de la réservation %s (parcours %s)", action, reservation.id, reservation.correlation_id)
 
 
 class ReservationService:
@@ -123,6 +133,7 @@ class ReservationService:
             start_at=start_at,
             end_at=end_at,
             status=ReservationStatus.PENDING_PAYMENT,
+            correlation_id=get_correlation_id(),
         )
         self._uow.reservations.add(reservation)
 
@@ -171,6 +182,11 @@ class ReservationService:
         reservation = self._uow.reservations.get(reservation_id)
         if reservation is None:
             raise ReservationNotFoundError(reservation_id)
+        _log_switch_to_reservation(reservation, "Annulation")
+        with correlation_scope(reservation.correlation_id):
+            return self._cancel(reservation)
+
+    def _cancel(self, reservation: Reservation) -> Reservation:
         if reservation.status != ReservationStatus.CONFIRMED:
             raise InvalidReservationStateError(
                 f"Impossible d'annuler une réservation au statut '{reservation.status.value}'"
@@ -242,10 +258,18 @@ class ReservationService:
 
         Idempotent : une réservation qui n'est plus en attente n'est pas
         modifiée. Une panne de Payment est loguée sans faire échouer
-        l'appelant : la réservation reste simplement en attente."""
+        l'appelant : la réservation reste simplement en attente.
+
+        L'appel à Payment, les logs et l'événement portent l'identifiant de
+        corrélation de la réservation, même si l'appel vient d'une autre
+        requête (consultation par le client, vérification par Access)."""
         if reservation.status != ReservationStatus.PENDING_PAYMENT or not reservation.payment_id:
             return reservation
+        _log_switch_to_reservation(reservation, "Vérification du paiement")
+        with correlation_scope(reservation.correlation_id):
+            return await self._apply_payment_status(reservation)
 
+    async def _apply_payment_status(self, reservation: Reservation) -> Reservation:
         try:
             attempt = await self._payment.get_payment(reservation.payment_id)
         except Exception:

@@ -6,6 +6,8 @@ import logging
 
 import httpx
 
+from .http_client import http_client
+
 logger = logging.getLogger("booking.wake_up")
 
 
@@ -13,7 +15,7 @@ async def wake_up(base_url: str, timeout: float) -> None:
     if not base_url:
         return
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with http_client(timeout) as client:
             await client.get(f"{base_url}/health")
     except httpx.HTTPError as exc:
         # Pas bloquant : l'appel réel qui suit dira si le service répond.

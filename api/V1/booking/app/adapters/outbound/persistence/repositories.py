@@ -25,6 +25,7 @@ def _reservation_to_domain(row: ReservationModel) -> Reservation:
         price_amount=row.price_amount,
         price_reference=row.price_reference,
         payment_id=row.payment_id,
+        correlation_id=row.correlation_id,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -59,6 +60,7 @@ class SqlAlchemyReservationRepository(ReservationRepository):
             price_amount=reservation.price_amount,
             price_reference=reservation.price_reference,
             payment_id=reservation.payment_id,
+            correlation_id=reservation.correlation_id,
         )
         self._session.add(row)
         self._session.flush()
