@@ -17,7 +17,11 @@ class LoggingEventPublisher(EventPublisher):
     Utilisée quand CLOUDAMQP_URL n'est pas configurée (dev sans bus réel)."""
 
     def publish(self, event_type: str, payload: Mapping[str, Any]) -> None:
-        logger.info("event published type=%s payload=%s", event_type, dict(payload))
+        logger.info(
+            "Événement %s NON envoyé (CLOUDAMQP_URL vide) : réservation %s",
+            event_type,
+            payload.get("reservation_id"),
+        )
 
 
 class RabbitMQEventPublisher(EventPublisher):
@@ -63,7 +67,14 @@ class RabbitMQEventPublisher(EventPublisher):
                 body=json.dumps(body),
                 properties=pika.BasicProperties(delivery_mode=pika.DeliveryMode.Persistent),
             )
-            logger.info("event published exchange=%s routing_key=%s body=%s", self._exchange, routing_key, body)
+            # Pas de corps complet dans le log : il contient l'email du client.
+            logger.info(
+                "Événement %s publié : exchange=%s routing_key=%s réservation %s",
+                body["event"],
+                self._exchange,
+                routing_key,
+                payload.get("reservation_id"),
+            )
         finally:
             connection.close()
 

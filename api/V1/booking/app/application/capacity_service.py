@@ -5,12 +5,15 @@ Ne commite jamais lui-même : la transaction est ouverte/validée par
 l'appelant (route ou ReservationService), qui peut avoir plusieurs
 opérations à faire aboutir ensemble (voir application/reservation_service.py)."""
 
+import logging
 from datetime import datetime
 
 from app.domain.enums import PlaceType
 from app.domain.exceptions import CapacityBelowBookedError, CapacityUnavailableError, InvalidSlotError
 from app.domain.rules import hour_slots
 from app.ports.unit_of_work import UnitOfWork
+
+logger = logging.getLogger("booking.capacity")
 
 
 class CapacityService:
@@ -65,6 +68,16 @@ class CapacityService:
         slot = self._uow.capacity.get_or_create(place_type, slot_start)
         if allocated < slot.booked:
             raise CapacityBelowBookedError(allocated, slot.booked)
+        previous = slot.allocated
         slot.allocated = allocated
         self._uow.capacity.save(slot)
+        if previous != allocated:
+            logger.info(
+                "Capacité %s à %s modifiée : %s -> %s place(s) (%s déjà réservée(s))",
+                place_type.value,
+                slot_start.isoformat(),
+                previous,
+                allocated,
+                slot.booked,
+            )
         return slot

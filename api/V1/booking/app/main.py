@@ -8,6 +8,7 @@ concrets se fait requête par requête dans adapters/inbound/http/dependencies.p
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 
@@ -15,8 +16,9 @@ from app.adapters.inbound.http.exception_handlers import register_exception_hand
 from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
 from app.adapters.outbound.persistence.database import Base, engine
 from app.config import settings
+from app.logging_config import setup_logging
 
-logging.basicConfig(level=logging.INFO)
+setup_logging()
 
 Base.metadata.create_all(bind=engine)
 
@@ -58,8 +60,37 @@ TAGS_METADATA = [
     {"name": "capacity", "description": "Allocation de la capacité réservable par créneau. Appelé par le service Parking."},
 ]
 
+logger = logging.getLogger("booking.startup")
+
+
+def _host(url: str) -> str:
+    """Hôte seul : jamais d'identifiants (ex. CLOUDAMQP_URL contient le mot de passe)."""
+    return (urlsplit(url).hostname or "?") if url else "non configuré"
+
+
+def _log_startup_config() -> None:
+    logger.info(
+        "Booking %s démarré : vehicles=%s pricing=%s payment=%s parking=%s bus=%s base=%s logs=%s",
+        app.version,
+        _host(settings.vehicles_service_url),
+        _host(settings.pricing_service_url),
+        _host(settings.payment_service_url),
+        _host(settings.parking_service_url),
+        _host(settings.cloudamqp_url),
+        settings.database_url.split(":", 1)[0],
+        settings.log_dir or "console uniquement",
+    )
+    if not settings.cloudamqp_url:
+        logger.warning("CLOUDAMQP_URL vide : les événements ne sont PAS envoyés à Messages, seulement logués")
+    if not settings.parking_service_url:
+        logger.warning("PARKING_SERVICE_URL vide : pas de synchro de capacité, seul PUT /capacity l'alimente")
+    if settings.vehicles_fallback_enabled:
+        logger.warning("TEMPORAIRE : secours Vehicles activé, identifiants calculés par Booking si Vehicles tombe")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    _log_startup_config()
     # Synchro de capacité avec Parking en tâche de fond : le service démarre
     # sans attendre que Parking (éventuellement en veille) réponde.
     task = asyncio.create_task(parking_sync.parking_sync_loop()) if settings.parking_service_url else None

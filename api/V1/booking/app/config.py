@@ -54,5 +54,12 @@ class Settings(BaseSettings):
     cloudamqp_url: str = ""
     event_bus_exchange: str = "microservice-event-bus"
 
+    # Logs : console toujours, plus un fichier par jour dans log_dir (chemin
+    # relatif, /app/logs dans Docker). Vide = console uniquement, à préférer
+    # sur Render dont le disque est effacé à chaque redéploiement.
+    log_level: str = "INFO"
+    log_dir: str = "logs"
+    log_retention_days: int = 14
+
 
 settings = Settings()

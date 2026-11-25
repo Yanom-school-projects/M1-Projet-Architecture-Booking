@@ -54,6 +54,18 @@ class ReservationService:
         self._settings = settings
         self._capacity = CapacityService(uow)
 
+    def _publish_event(self, event_type: str, reservation_id: str, payload: dict) -> None:
+        """Publie un événement sans faire échouer l'appelant : le changement de
+        statut est déjà validé en base, une panne du bus ne doit ni renvoyer
+        une 500 au client ni interrompre le suivi du paiement. L'événement
+        perdu est logué en ERROR pour pouvoir le renvoyer à la main.
+        TODO : outbox (événements stockés en base, renvoyés en tâche de fond)
+        pour ne plus dépendre d'une intervention manuelle."""
+        try:
+            self._events.publish(event_type, payload)
+        except Exception:
+            logger.exception("Événement %s NON publié pour la réservation %s", event_type, reservation_id)
+
     def _generate_reservation_id(self) -> str:
         """Code à 6 chiffres, pas un UUID : c'est la référence que le client
         communiquera au parking (par oral ou sur un ticket), elle doit
@@ -140,6 +152,15 @@ class ReservationService:
             raise ExternalServiceError("Échec de la préparation du paiement, réservation annulée") from exc
 
         self._uow.commit()
+        logger.info(
+            "Réservation %s créée : %s du %s au %s, %s EUR, paiement %s en attente",
+            reservation.id,
+            place_type.value,
+            start_at.isoformat(),
+            end_at.isoformat(),
+            reservation.price_amount,
+            reservation.payment_id,
+        )
         return reservation
 
     def cancel_reservation(self, reservation_id: str) -> Reservation:
@@ -163,8 +184,10 @@ class ReservationService:
         self._capacity.release(reservation.place_type, reservation.start_at, reservation.end_at)
         self._uow.commit()
         reservation.status = ReservationStatus.CANCELLED
-        self._events.publish(
+        logger.info("Réservation %s annulée par le client, capacité libérée", reservation.id)
+        self._publish_event(
             "reservation.cancelled",
+            reservation.id,
             {
                 "reservation_id": reservation.id,
                 "vehicle_id": reservation.vehicle_id,
@@ -239,8 +262,9 @@ class ReservationService:
                 return self._uow.reservations.get(reservation.id)
             reservation.status = ReservationStatus.CONFIRMED
             logger.info("Réservation %s confirmée (paiement %s)", reservation.id, reservation.payment_id)
-            self._events.publish(
+            self._publish_event(
                 "reservation.confirmed",
+                reservation.id,
                 {
                     "reservation_id": reservation.id,
                     "vehicle_id": reservation.vehicle_id,
