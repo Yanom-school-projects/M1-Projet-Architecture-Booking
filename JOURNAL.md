@@ -168,14 +168,16 @@ Fait
 - base Postgres vérifiée : une réservation survit à un redéploiement ; parcours complet testé en ligne avec les autres services, contrat `/reservations/valid` validé par Access ;
 - **mode secours Vehicles supprimé** (`vehicles_fallback.py`, variables `VEHICLES_FALLBACK_*`) : Vehicles est branché, une panne renvoie de nouveau 502 sans consommer de place ;
 - **version 2.6.0**, définie une seule fois dans `app/__init__.py` et marquée par le tag `v2.6.0` (la CI vérifie la concordance) ;
-- **histogramme `http_request_duration_seconds`** (méthode, route), demandé au jalon 13 : la durée s'arrête à l'envoi de la réponse, pour ne pas compter le suivi du paiement lancé en tâche de fond ; seuils jusqu'à 120 s pour les réveils Render ; ligne « Latence » (p50 / p95 / p99) dans Grafana.
+- **histogramme `http_request_duration_seconds`** (méthode, route), demandé au jalon 13 : la durée s'arrête à l'envoi de la réponse, pour ne pas compter le suivi du paiement lancé en tâche de fond ; seuils jusqu'à 120 s pour les réveils Render ; ligne « Latence » (p50 / p95 / p99) dans Grafana ;
+- contrats confirmés : format des événements validé par Messages ; Parking confirme que `spot_available` est le nombre de places **libres à l'instant**, pas un quota réservé à Booking ;
+- `docs/booking_architecture.md` et `docs/booking_test_scenario.md` réécrits : ils décrivaient encore les webhooks Payment et le remboursement de 50 %, abandonnés depuis.
 
 Problèmes
-- les variables `VEHICLES_FALLBACK_*` éventuellement restées dans Render sont ignorées, à supprimer pour la propreté.
+- les variables `VEHICLES_FALLBACK_*` éventuellement restées dans Render sont ignorées, à supprimer pour la propreté ;
+- Booking applique `spot_available` à toutes les heures des 37 prochains jours : un parking plein maintenant bloque les réservations futures, un parking vide permet de promettre des places qui seront peut-être occupées. Le bon contrat serait un quota réservable fixé par Parking ; trop tard pour le changer avant le rendu, documenté comme point de friction.
 
 Suite
-- confirmer avec Messages le format des événements et avec Parking le sens de `spot_available` ;
-- docs d'architecture et de test, dépôt SharePoint, préparation de la keynote.
+- dépôt SharePoint, tableau de suivi, préparation de la keynote.
 
 ---
 

@@ -1,179 +1,212 @@
-# Scénario de test — service Booking (MVP)
+# Scénario de test manuel — service Booking (v2.6.0)
 
-But : dérouler le flux complet (dispo → réservation → paiement async → confirmation → annulation) et les cas limites, pour remonter des retours. Chaque étape indique le résultat attendu — note tout ce qui diverge.
+But : dérouler à la main le parcours complet (disponibilité, réservation,
+paiement, confirmation, vérification Access, annulation), les cas d'erreur, la
+sécurité et l'observabilité. Chaque étape indique le résultat attendu : noter tout
+ce qui diverge.
 
-⚠️ Pas de migrations en place (pas d'Alembic pour ce MVP) : si une erreur type `no such column` apparaît après avoir récupéré une mise à jour du code, c'est que le schéma a changé — supprime `api/V1/booking/booking.db` (perte des données de test locales, sans conséquence) et relance l'API pour qu'elle recrée la base à jour.
+Ce scénario complète les **112 tests automatisés** (`python -m pytest`, voir le
+README) : eux vérifient la logique avec de faux services ; ce scénario vérifie
+le service réellement lancé, en local ou en ligne.
 
-## 0. Lancement (3 terminaux)
+Toutes les routes sont sous `/v2/booking` et exigent l'en-tête
+`X-API-Key: <API_KEY>`, sauf `/health`. Dans Swagger (`/docs`), cliquer
+**Authorize** et coller la clé une fois.
+
+---
+
+## 0. Lancement
+
+### En local (mocks)
 
 ```powershell
-# Terminal 1 — mocks Vehicles/Pricing/Payment
-cd "api/V1/booking"
-.\.venv\Scripts\python.exe -m uvicorn mocks.server:app --port 9000 --reload
+# Terminal 1 : faux Vehicles / Pricing / Payment
+cd api/V1/booking
+.\.venv\Scripts\python -m uvicorn mocks.server:app --port 9000
 
-# Terminal 2 — API Booking
-cd "api/V1/booking"
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000 --reload
+# Terminal 2 : API Booking (API_KEY renseignée dans api/V1/booking/.env)
+cd api/V1/booking
+.\.venv\Scripts\python -m uvicorn app.main:app --port 8000 --reload
 
-# Terminal 3 — front Streamlit
-cd "front"
+# Terminal 3 : front
+cd front
 $env:BOOKING_API_URL = "http://localhost:8000"
-.\.venv\Scripts\python.exe -m streamlit run app.py
+$env:BOOKING_API_KEY = "<même valeur que API_KEY>"
+.\.venv\Scripts\python -m streamlit run app.py
 ```
 
-Ouvrir :
-- Swagger Booking : http://localhost:8000/docs
-- Swagger mocks : http://localhost:9000/docs
-- Front : http://localhost:8501
-
-### Semer une capacité de base
-
-La base démarre vide : tant que personne n'a appelé `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}` sur un
-créneau, il est normal d'obtenir `409 Aucune capacité disponible`. En
-attendant que le service Parking existe, un script sème une capacité de
-référence sur les prochains jours, toutes heures et tous types de place :
+Sans Parking en local, semer une capacité de test (toutes heures, tous types,
+`STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3, TWO_WHEELS=5`) :
 
 ```powershell
-# Terminal 4 (ou dans Terminal 2 une fois l'API lancée)
-cd "api/V1/booking"
-.\.venv\Scripts\python.exe scripts\seed_capacity.py --days 3
+cd api/V1/booking
+$env:API_KEY = "<clé>"; .\.venv\Scripts\python scripts\seed_capacity.py --days 3
 ```
 
-Répartition par défaut : `STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3, TWO_WHEELS=5`,
-modifiable dans `scripts/seed_capacity.py`. Rejouable sans risque : il ne
-touche que `allocated`, jamais les places déjà réservées (`booked`). Les
-scénarios C, D et F ci-dessous ont volontairement besoin d'une capacité
-précise (souvent 1 place) : ils repassent par `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}` en ciblé plutôt
-que par ce script.
+Le script ne touche que `allocated`, jamais les places déjà réservées : on peut le rejouer.
 
-✅ Attendu : les 3 pages se chargent, `GET /v2/booking/health` sur Booking renvoie `{"status": "ok"}`.
+### En ligne
 
----
+API https://booking-api-vhy5.onrender.com (Swagger : `/docs`), front
+https://booking-front-ltvv.onrender.com. La capacité vient de Parking (synchro
+toutes les heures). Premier appel après une période d'inactivité : environ 30 s.
 
-## A. Happy path via Swagger
-
-1. **`PUT /v2/booking/capacity-slots/{place_type}/{slot_start}`** : alloue de la capacité pour tester, ex. `place_type=STANDARD`, `slot_start` = une heure pleine future (aujourd'hui + quelques heures, format `2026-09-02T18:00:00`), `allocated=2`. Refaire pour l'heure suivante si le créneau testé dure 2h.
-   ✅ Réponse 200 avec les valeurs envoyées.
-
-2. **`GET /v2/booking/availability`** avec le même `place_type`/`start_at`/`end_at`.
-   ✅ `available: true`, `min_free_capacity` = valeur allouée.
-
-3. **`POST /v2/booking/reservations`** avec une plaque au choix, même type/créneau.
-   ✅ 201, statut `pending_payment`, `price_amount` rempli, `payment_id` rempli.
-   📝 Note l'`id` de la réservation renvoyée.
-
-4. **`GET /v2/booking/reservations/{id}`** immédiatement.
-   ✅ Statut encore `pending_payment` (le mock Payment répond après ~3s).
-
-5. Attendre 3–5s, refaire **`GET /v2/booking/reservations/{id}`**.
-   ✅ Statut passé à `confirmed`.
-
-6. Refaire **`GET /v2/booking/availability`** sur le même créneau.
-   ✅ `min_free_capacity` a diminué de 1.
-
-7. Regarder le terminal de l'API Booking (Terminal 2).
-   ✅ Une ligne de log `event published type=reservation.confirmed payload=...` doit apparaître (c'est l'événement que Messages consommera plus tard).
+✅ `GET /v2/booking/health` renvoie `{"status": "ok", "service": "booking", "version": "2.6.0"}`, sans clé.
 
 ---
 
-## B. Happy path via le front
+## A. Parcours nominal via Swagger
 
-1. Sur http://localhost:8501, remplir le formulaire avec un créneau **déjà alloué** (via A.1, ou en refaire un nouveau via Swagger `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}`).
-2. Cliquer **Vérifier la disponibilité**.
-   ✅ Message vert "Disponible (...)".
-3. Cliquer **Réserver**.
-   ✅ Message bleu "Réservation créée (...), en attente de paiement…", puis le statut affiché est `pending_payment`.
-4. Cliquer **Rafraîchir le statut** après quelques secondes.
-   ✅ Finit par afficher "Réservation confirmée ! Montant : X €".
+1. **`GET /availability`** avec `place_type=STANDARD`, un créneau futur sur des
+   heures pleines (ex. `start_at=2026-12-02T14:00:00Z`, `end_at=2026-12-02T16:00:00Z`).
+   ✅ `available: true`, `min_free_capacity` ≥ 1.
 
-📝 Note l'ergonomie : est-ce clair, faut-il cliquer plusieurs fois, le formulaire est-il pratique (heure/durée) ?
+2. **`POST /reservations`** :
+   ```json
+   {"vehicle_plate": "AB-123-CD", "email": "client@example.com", "place_type": "STANDARD",
+    "start_at": "2026-12-02T14:00:00Z", "end_at": "2026-12-02T16:00:00Z"}
+   ```
+   ✅ 201, statut `pending_payment`, `price_amount` et `payment_id` remplis, `id` à 6 chiffres.
+   ✅ En-tête de réponse `X-Correlation-ID` présent. 📝 Noter `id`, `vehicle_id` et cet identifiant.
+
+3. **`GET /reservations/{id}`** tout de suite.
+   ✅ Encore `pending_payment` (Payment tranche en quelques secondes avec le mock, 15 à 30 s en ligne).
+
+4. Attendre, puis refaire **`GET /reservations/{id}`**.
+   ✅ `confirmed` (ou `failed` si Payment refuse, environ 5 % des cas en ligne).
+
+5. **`GET /availability`** sur le même créneau.
+   ✅ `min_free_capacity` a baissé de 1.
+
+6. Logs de l'API.
+   ✅ Les lignes de création, de paiement et de confirmation portent toutes le
+   même identifiant de corrélation ; l'événement `reservation.confirmed` est publié
+   (ou « NON envoyé » sans `CLOUDAMQP_URL`).
 
 ---
 
-## C. Paiement refusé (impossible à obtenir "naturellement" — le mock ne fait que payer)
+## B. Parcours nominal via le front
 
-Le mock expose une route de test dédiée pour forcer un statut sans attendre les 3s automatiques :
-`POST http://localhost:9000/payment/payments/{payment_id}/force-status` avec `{"status": "refused"}` (ou `"cancelled"`).
+1. Choisir le type, la date et l'heure (heure de Paris), une plaque et un e-mail.
+2. **Vérifier la disponibilité** : ✅ message « Disponible ».
+3. **Réserver** : ✅ code à 6 chiffres affiché, puis suivi du paiement jusqu'à « confirmée ».
+4. Section **Annuler une réservation** avec ce code : ✅ réservation annulée.
+5. Code d'annulation mal formé (ex. `12ab`) : ✅ refusé par le front avant tout appel.
 
-1. Crée une réservation (comme en A.3), récupère `payment_id`.
-2. **Avant 3 secondes**, appelle `force-status` avec `status=refused` (sur le Swagger des mocks, port 9000).
-3. **`GET /v2/booking/reservations/{id}`** côté Booking.
-   ✅ Statut `failed`.
-4. **`GET /v2/booking/availability`** sur le créneau concerné.
-   ✅ La capacité reprise a été **libérée** (remontée par rapport à juste après la réservation).
-5. Attendre que les 3s originales soient passées (au cas où l'auto-confirmation du mock tenterait de repasser en `paid`).
-   ✅ Le statut reste `failed` (pas d'écrasement) — c'est le test de l'idempotence du webhook.
+📝 Noter l'ergonomie : clarté des messages, temps d'attente, formulaire.
 
 ---
 
-## D. Cas d'erreur attendus
+## C. Paiement refusé (mock)
 
-À tester via Swagger (`POST /v2/booking/reservations`), chacun doit renvoyer le code indiqué :
+Le mock Payment accepte toujours ; une route propre au mock force un refus :
+`POST http://localhost:9000/payment/payments/{payment_id}/force-status` avec `{"status": "REFUSED"}`.
 
-| Cas | Comment le provoquer | Code attendu |
+1. Créer une réservation (A.2), récupérer `payment_id`.
+2. Avant qu'elle soit confirmée, forcer `REFUSED`.
+3. **`GET /reservations/{id}`** : ✅ `failed`.
+4. **`GET /availability`** : ✅ la place est rendue.
+5. Refaire **`GET /reservations/{id}`** : ✅ toujours `failed`, la place n'est pas rendue deux fois.
+
+---
+
+## D. Vérification par Access
+
+Avec la réservation confirmée de A (créneau 14 h – 16 h UTC) :
+
+| Appel `GET /reservations/valid` | Attendu |
+|---|---|
+| `vehicle_id=<noté>&at=2026-12-02T14:00:00Z` (début) | `valid: true`, type `STANDARD`, sans e-mail |
+| `at=2026-12-02T15:30:00Z` (pendant) | `valid: true` |
+| `at=2026-12-02T16:00:00Z` (fin) | `valid: false` (fin exclue) |
+| `at=2026-12-02T13:59:00Z` (en avance) | `valid: false` (pas de tolérance) |
+| `at=2026-12-02T16:30:00+02:00` (fuseau, = 14 h 30 UTC) | `valid: true`, `at` renvoyé en UTC |
+| `vehicle_id=inconnu` | 200, `valid: false`, liste vide |
+| sans `at` | instant vérifié = maintenant |
+| réservation annulée (après G) ou en échec (C) | `valid: false` |
+
+Réservation encore `pending_payment` dont Payment a accepté le paiement : ✅
+`valid: true`, et la réservation passe à `confirmed` au passage.
+
+---
+
+## E. Cas d'erreur
+
+| Cas | Comment | Attendu |
 |---|---|---|
-| Créneau non aligné sur une heure pleine | `start_at` avec des minutes ≠ 00, ex. `...T15:30:00` | 422 |
-| Créneau déjà passé | `start_at` dans le passé | 422 |
-| Créneau à plus de 30 jours | `start_at` = aujourd'hui + 31 jours | 422 |
+| Créneau non aligné | `start_at` à `15:30` | 422 |
+| Créneau passé | `start_at` hier | 422 |
+| Au-delà de 30 jours | `start_at` dans 31 jours | 422 |
 | Durée > 7 jours | `end_at` = `start_at` + 8 jours | 422 |
-| `end_at` avant/égal `start_at` | `end_at` = `start_at` | 422 |
-| Aucune capacité allouée sur le créneau | Un créneau/type jamais passé par `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}` | 409 |
-| Capacité épuisée | Allouer 1 place, réserver deux fois de suite le même créneau | 409 sur la 2e réservation |
-| Réservation inconnue (bon format, n'existe pas) | `GET /v2/booking/reservations/999999` | 404 |
-| Code de réservation mal formé | `GET /v2/booking/reservations/abc` | 422 |
+| `end_at` ≤ `start_at` | `end_at` = `start_at` | 422 |
+| Plaque invalide | `"A"`, 21 caractères ou `"AB<script>"` | 422 |
+| E-mail invalide | `"pas-un-email"` | 422 |
+| Type inconnu | `"place_type": "VIP"` | 422 |
+| Plus de place | allouer 1 place (`PUT /capacity-slots`), réserver deux fois | 409 à la 2e |
+| Capacité sous le réservé | `PUT /capacity-slots` avec `allocated` < `booked` | 409 |
+| Réservation inconnue | `GET /reservations/000000` | 404 |
+| Code mal formé | `GET /reservations/abc` | 422 |
+| Annuler une réservation non confirmée | `POST /reservations/{id}/cancel` en `pending_payment` | 409 |
+| Service dépendant arrêté | couper le mock (Terminal 1), réserver | 502, aucune place consommée |
 
-📝 Vérifie aussi que le message d'erreur (`detail`) est compréhensible.
-
----
-
-## E. Vérification manuelle du webhook (bonus, avec Swagger des mocks ou curl)
-
-Rejouer **deux fois** le même appel `POST /webhooks/payment` (même `payment_id`/`reference`/`status=paid`) sur une réservation déjà `confirmed`.
-✅ Le deuxième appel ne doit rien casser (toujours `{"received": true}`) et ne doit pas republier l'événement une deuxième fois (vérifier les logs de l'API).
+📝 Vérifier que chaque `detail` est compréhensible.
 
 ---
 
-## F. Concurrence légère (optionnel)
+## F. Sécurité
 
-1. Alloue 1 seule place pour un créneau.
-2. Ouvre deux onglets Swagger (ou deux requêtes rapprochées) et envoie 2× `POST /v2/booking/reservations` sur ce créneau presque simultanément.
-   ✅ Une seule doit réussir (201), l'autre doit recevoir 409.
+| Appel | Attendu |
+|---|---|
+| `GET /health` sans clé | 200 |
+| `GET /reservations` sans clé | 401, en-tête `WWW-Authenticate: ApiKey` |
+| `GET /reservations` avec une mauvaise clé | 401 |
+| `GET /reservations` avec la clé | 200 |
+| `GET /metrics` avec `Authorization: Bearer <clé>` | 200 |
+| `GET /metrics` sans clé | 401 |
+| Réponse de n'importe quelle route | en-têtes `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Cache-Control: no-store` |
+
+```powershell
+curl.exe -i https://booking-api-vhy5.onrender.com/v2/booking/reservations
+curl.exe -i -H "X-API-Key: <clé>" https://booking-api-vhy5.onrender.com/v2/booking/reservations
+```
 
 ---
 
-## G. Annulation avec remboursement de 50%
+## G. Annulation (sans remboursement)
 
-Nouveauté : une réservation **confirmée** peut être annulée par le client
-(`POST /v2/booking/reservations/{id}/cancel`). Le client est remboursé de la moitié du
-montant payé, l'autre moitié reste acquise au parking. Convention testée via
-le mock : Booking rappelle Payment avec la même référence (l'id de
-réservation) et un montant à moitié prix ; Payment détecte l'écart avec ce
-qu'il avait déjà encaissé et déclenche un remboursement de la différence — **à
-confirmer avec qui implémente réellement Payment**, ce n'est qu'une
-hypothèse de contrat pour l'instant.
+1. Sur une réservation `confirmed` : **`POST /reservations/{id}/cancel`**.
+   ✅ 200, statut `cancelled`.
+2. **`GET /availability`** : ✅ la place est rendue immédiatement.
+3. Annuler une seconde fois : ✅ 409.
+4. Logs : ✅ événement `reservation.cancelled` publié, avec l'identifiant de
+   corrélation de la **création** de la réservation.
 
-1. Crée une réservation et force son paiement (`force-status` avec `status=paid`, ou attends les 3s automatiques).
-2. **`POST /v2/booking/reservations/{id}/cancel`**.
-   ✅ 201/200, statut `cancellation_pending`, `refund_amount` = moitié de `price_amount` (ex. 2.00 € payé → 1.00 € de `refund_amount`).
-3. **`GET /v2/booking/availability`** sur le créneau, immédiatement.
-   ✅ La capacité est déjà libérée (pas besoin d'attendre la confirmation du remboursement).
-4. Réessaie **`POST /v2/booking/reservations/{id}/cancel`** sur la même réservation.
-   ✅ 409 (déjà en cours d'annulation).
-5. Attends ~2-3s (le mock confirme le remboursement plus vite qu'un paiement), puis **`GET /v2/booking/reservations/{id}`**.
-   ✅ Statut `cancelled`, `refund_amount` inchangé.
-6. Vérifie dans les logs de l'API Booking la ligne `event published type=reservation.cancelled`.
-7. Essaie d'annuler une réservation qui n'est **pas** `confirmed` (ex. encore `pending_payment`, ou déjà `cancelled`).
-   ✅ 409 avec un message indiquant le statut actuel.
+---
 
-Testable aussi via le front : section "Annuler une réservation" en bas de page, en collant le code à 6 chiffres reçu à la création.
+## H. Observabilité
+
+1. Envoyer une requête avec `-H "X-Correlation-ID: demo-1234"`.
+   ✅ Réponse avec le même en-tête, logs de la requête marqués `demo-1234`.
+2. **`GET /metrics`** (avec la clé) : ✅ séries `http_requests_total`,
+   `http_request_duration_seconds_bucket` et `parking_operations_total` ; le label
+   `route` est le modèle (`/v2/booking/reservations/{reservation_id}`), jamais un code réel.
+3. En local, `docker compose up -d --build` puis Grafana (http://localhost:3000) :
+   ✅ lignes Disponibilité, Trafic, Opérations métier et Latence remplies après quelques requêtes.
+4. Démo de panne : `docker compose stop booking`.
+   ✅ Booking passe à `up = 0` dans Grafana ; `docker compose start booking` le rétablit.
+
+---
+
+## I. Concurrence (optionnel)
+
+1. Allouer 1 seule place sur un créneau.
+2. Envoyer deux `POST /reservations` presque simultanés sur ce créneau.
+   ✅ Une seule réussit (201), l'autre reçoit 409.
 
 ---
 
 ## Grille de retours
 
-Pour chaque point testé, note :
-- ✅ conforme / ❌ divergent (avec le comportement observé)
-- Remarques UX/API (messages peu clairs, champ manquant, ordre des questions du front, etc.)
-- Idées de cas non couverts par ce scénario
-
-Renvoie-moi cette liste (même brute) et on ajuste le code en conséquence.
+Pour chaque point : ✅ conforme ou ❌ divergent (comportement observé), remarques
+sur les messages ou l'ergonomie, cas non couverts. Les divergences confirmées
+deviennent un test automatisé dans `api/V1/booking/tests/`.

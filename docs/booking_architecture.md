@@ -1,72 +1,69 @@
-# Architecture — service Booking
+# Architecture — service Booking (v2.6.0)
 
-Documentation technique du service **Booking** (voir le cadrage métier dans
-[`projet_fil_rouge_parking_cadrage_metier.md`](./projet_fil_rouge_parking_cadrage_metier.md)
-pour le contexte global du projet, et
-[`booking_test_scenario.md`](./booking_test_scenario.md) pour un scénario de
-test bout-en-bout).
+Documentation technique du service **Booking**. Contexte global du projet :
+[`projet_fil_rouge_parking_cadrage_metier.md`](./projet_fil_rouge_parking_cadrage_metier.md).
+Scénario de test manuel : [`booking_test_scenario.md`](./booking_test_scenario.md).
+Mise en route, URL et configuration : [README](../README.md).
 
 ## 1. Rôle du service
 
-Booking gère la disponibilité future du parking (un calendrier de capacité
-par type de place et par heure) et le cycle de vie d'une réservation :
-recherche de créneau → tarification → paiement anticipé → confirmation →
-annulation avec remboursement partiel.
+Booking gère la **disponibilité future** du parking (un calendrier de places
+réservables par type de place et par heure) et le **cycle de vie d'une
+réservation** : recherche de créneau, tarification, paiement anticipé,
+confirmation, annulation (sans remboursement).
 
-**Ce que Booking possède** : les réservations, le calendrier de capacité qui
-lui est allouée.
-**Ce que Booking ne possède pas** : les plaques réelles (Vehicles), les
-règles de tarification (Pricing), la logique de paiement (Payment),
-l'attribution physique d'une place précise (Parking/Access).
+**Ce que Booking possède** : les réservations et le calendrier de capacité réservable.
+**Ce que Booking ne possède pas** : la plaque réelle (Vehicles), les règles de
+tarification (Pricing), l'encaissement (Payment), le stock physique de places
+(Parking), l'ouverture de la barrière et l'attribution d'une place précise (Access).
 
 ### Place dans le système
 
 ```mermaid
 flowchart LR
-    Front["Front (Streamlit)"] -->|HTTP| Booking
-    Parking -->|"PUT /v2/booking/capacity-slots/{place_type}/{slot_start}"| Booking
-    Access -->|"GET /v2/booking/reservations/valid"| Booking
-    Booking -->|"POST /vehicles/resolve"| Vehicles
-    Booking -->|"POST /pricing/reservation"| Pricing
-    Booking -->|"POST /payments"| Payment
-    Payment -->|"POST /webhooks/payment (async)"| Booking
+    Front["Front (Streamlit)"] -->|"X-API-Key"| Booking
+    Access -->|"GET /v2/booking/reservations/valid (X-API-Key)"| Booking
+    Prometheus -->|"GET /v2/booking/metrics (Bearer)"| Booking
+    Booking -->|"POST /api/vehicle/create"| Vehicles
+    Booking -->|"POST /quote"| Pricing
+    Booking -->|"POST /payments puis GET /payments/{id}"| Payment
+    Booking -->|"GET /parking/availability/{type}/booking"| Parking
     Booking -.->|"booking.confirmed / booking.cancelled (RabbitMQ)"| Messages
 ```
 
-Vehicles, Pricing, Payment sont appelés en **HTTP synchrone** (Booking a
-besoin de leur réponse pour continuer). Payment répond d'abord un statut
-intermédiaire (`pending`) puis rappelle Booking de façon **asynchrone** sur
-un webhook une fois le paiement (ou le remboursement) tranché. Messages est
-notifié par **événement** sur un bus RabbitMQ (CloudAMQP), sans attendre de
-réponse.
+- Vehicles, Pricing, Payment et Parking sont appelés en **HTTP synchrone** :
+  c'est toujours Booking qui appelle, aucun service ne rappelle Booking.
+- Payment répond d'abord `PENDING` ; Booking **interroge** ensuite
+  `GET /payments/{id}` jusqu'à `ACCEPTED` ou `REFUSED` (Payment n'a pas de webhook).
+- Messages est prévenu par **événement** sur le bus RabbitMQ (CloudAMQP), sans réponse attendue.
+- Chaque appel porte l'en-tête `X-Correlation-ID` (voir §9.1).
 
 ---
 
 ## 2. Architecture hexagonale (ports & adapters)
 
-Le code de Booking est organisé pour qu'une seule règle soit toujours vraie :
-**le métier ne dépend jamais d'une technologie**. `app/domain/` et
-`app/application/` ignorent totalement l'existence de FastAPI, SQLAlchemy,
-httpx ou pika — ils ne connaissent que des interfaces (`app/ports/`). Ce sont
-les adaptateurs (`app/adapters/`) qui branchent une technologie concrète sur
-ces interfaces, dans un sens ou dans l'autre :
+Une règle est toujours vraie : **le métier ne dépend jamais d'une technologie**.
+`app/domain/` et `app/application/` ignorent FastAPI, SQLAlchemy, httpx, pika et
+Prometheus : ils ne connaissent que des interfaces (`app/ports/`). Les adaptateurs
+(`app/adapters/`) branchent une technologie concrète sur ces interfaces.
 
 ```mermaid
 flowchart TB
-    subgraph Entrant["adapters/inbound — pilotent l'application"]
-        HTTP["HTTP (FastAPI)<br/>routers, schémas, DI"]
+    subgraph Entrant["adapters/inbound : pilotent l'application"]
+        HTTP["HTTP (FastAPI)<br/>routers, schémas, sécurité, middlewares"]
     end
 
-    subgraph Coeur["Cœur métier — ne dépend d'aucun framework"]
+    subgraph Coeur["Cœur métier : aucun framework"]
         Domain["domain/<br/>entités, règles, exceptions"]
-        App["application/<br/>cas d'usage (orchestration)"]
-        Ports["ports/<br/>interfaces (Repository, UnitOfWork,<br/>VehiclesPort, PricingPort, PaymentPort, EventPublisher)"]
+        App["application/<br/>cas d'usage"]
+        Ports["ports/<br/>UnitOfWork, Repositories, VehiclesPort, PricingPort,<br/>PaymentPort, ParkingPort, EventPublisher, BusinessMetrics"]
     end
 
-    subgraph Sortant["adapters/outbound — pilotés par l'application"]
+    subgraph Sortant["adapters/outbound : pilotés par l'application"]
         Persist["persistence (SQLAlchemy)"]
         Ext["external_services (httpx)"]
-        Msg["messaging (pika/RabbitMQ)"]
+        Msg["messaging (pika / RabbitMQ)"]
+        Met["metrics (prometheus_client)"]
     end
 
     HTTP --> App
@@ -75,447 +72,430 @@ flowchart TB
     Persist -.implémente.-> Ports
     Ext -.implémente.-> Ports
     Msg -.implémente.-> Ports
+    Met -.implémente.-> Ports
 ```
 
-- **`domain/`** : objets et règles métier purs (dataclasses Python, aucune
-  ligne ne sait qu'une base de données existe). C'est le centre de
-  l'hexagone.
-- **`ports/`** : les interfaces (`ABC`) dont `application/` a besoin pour
-  travailler — persistance, services externes, publication d'événements.
-  Un port ne sait rien de son implémentation.
-- **`application/`** : les cas d'usage (ex-`services/`) — `ReservationService`,
-  `CapacityService`. Ils orchestrent le domaine à travers les ports
-  uniquement. C'est ici que vit la logique métier de Booking.
-- **`adapters/inbound/http/`** : le seul point d'entrée aujourd'hui (une API
-  REST FastAPI). Traduit une requête HTTP en appel de cas d'usage, et une
-  exception métier en code de statut. Remplaçable par un autre adaptateur
-  entrant (CLI, consommateur d'événements...) sans toucher au métier.
-- **`adapters/outbound/`** : les implémentations concrètes des ports —
-  SQLAlchemy pour la persistance, httpx pour Vehicles/Pricing/Payment, pika
-  pour la publication vers Messages/Notification. Remplaçables (autre base,
-  autre broker) sans toucher au métier.
+- **`domain/`** : dataclasses et règles pures (`validate_slot`, `hour_slots`). L'heure
+  courante est passée en paramètre : les règles se testent sans horloge ni base.
+- **`ports/`** : interfaces (`ABC`) dont `application/` a besoin.
+- **`application/`** : cas d'usage `ReservationService`, `CapacityService`,
+  `ParkingSyncService`. Ils n'utilisent que les ports.
+- **`adapters/inbound/http/`** : l'API REST. Traduit une requête en appel de cas
+  d'usage et une exception métier en code HTTP ; porte aussi la sécurité et les middlewares.
+- **`adapters/outbound/`** : SQLAlchemy, clients httpx, publication RabbitMQ, métriques Prometheus.
 
-**Sens des dépendances** : toutes les flèches de code pointent vers le
-centre (`domain/`). Un adaptateur peut importer `ports/` et `domain/` ;
-`application/` peut importer `domain/` et `ports/` ; mais `domain/` et
-`ports/` n'importent jamais un adaptateur. C'est ce qui permet de changer de
-base de données ou de broker sans modifier une seule ligne de logique
-métier.
+**Sens des dépendances** : toutes les flèches pointent vers le centre.
+`domain/` et `ports/` n'importent jamais un adaptateur. C'est ce qui a permis de
+passer de SQLite à Postgres, des mocks aux vrais services, et d'écrire les tests
+avec de faux adaptateurs, sans toucher au métier.
 
 ---
 
-## 3. Arborescence du dépôt
+## 3. Arborescence
 
 ```
 api/V1/booking/
   app/
-    main.py                        # composition root : assemble l'app FastAPI
-    config.py                      # configuration (variables d'env)
+    __init__.py                    # __version__ : seule source de la version
+    main.py                        # composition root : app FastAPI, middlewares, routes
+    config.py                      # configuration (variables d'environnement / .env)
+    correlation.py                 # identifiant de corrélation (ContextVar)
+    logging_config.py              # logs console + fichier journalier
+    metrics.py                     # déclaration des métriques Prometheus
 
-    domain/                        # cœur métier — zéro dépendance framework
-      entities.py                  # Reservation, CapacitySlot (dataclasses)
-      enums.py                     # PlaceType, ReservationStatus
-      value_objects.py             # PriceQuote, PaymentAttempt
-      exceptions.py                # exceptions métier (DomainError et sous-classes)
-      rules.py                     # validate_slot, hour_slots (fonctions pures)
+    domain/                        # cœur métier, zéro dépendance framework
+      entities.py                  # Reservation, CapacitySlot
+      enums.py                     # PlaceType (+ libellés), ReservationStatus
+      value_objects.py             # PriceQuote, PaymentAttempt, PaymentStatus
+      exceptions.py                # DomainError et sous-classes
+      rules.py                     # validate_slot, hour_slots
 
-    ports/                         # interfaces dont dépend application/
-      repositories.py              # ReservationRepository, CapacityRepository
-      unit_of_work.py              # UnitOfWork
+    ports/
+      repositories.py, unit_of_work.py
       external_services.py         # VehiclesPort, PricingPort, PaymentPort
+      parking.py                   # ParkingPort
       event_publisher.py           # EventPublisher
+      metrics.py                   # BusinessMetrics, Operation, Result
 
-    application/                   # cas d'usage (orchestration métier)
-      reservation_service.py       # création, annulation, traitement des webhooks
-      capacity_service.py          # disponibilité, réservation/libération de capacité
+    application/
+      reservation_service.py       # création, suivi du paiement, annulation, vérification Access
+      capacity_service.py          # disponibilité, réservation / libération de capacité
+      parking_sync_service.py      # capacité réservable lue chez Parking
 
     adapters/
-      inbound/
-        http/                      # adaptateur entrant : API REST FastAPI
-          schemas.py                # DTOs Pydantic (requêtes/réponses)
-          dependencies.py            # câblage : construit les cas d'usage avec leurs adaptateurs
-          exception_handlers.py       # traduit les exceptions domain/ en codes HTTP
-          routers/
-            health.py, availability.py, reservations.py, capacity.py, webhooks.py
+      inbound/http/
+        security.py                # clé d'API (X-API-Key, Bearer pour /metrics)
+        correlation_middleware.py  # X-Correlation-ID
+        metrics_middleware.py      # http_requests_total, http_request_duration_seconds
+        security_headers_middleware.py
+        exception_handlers.py      # exceptions métier -> codes HTTP, 500 générique
+        dependencies.py            # câblage des cas d'usage et suivi du paiement en tâche de fond
+        schemas.py                 # DTO Pydantic (validation des entrées)
+        routers/                   # health, availability, reservations, capacity, parking_sync
       outbound/
-        persistence/                # implémentation SQLAlchemy des ports de persistance
-          database.py                # engine/session
-          orm_models.py               # tables SQLAlchemy (séparées des entités du domaine)
-          repositories.py              # Sql...Repository : convertit ORM <-> domaine
-          unit_of_work.py               # SqlAlchemyUnitOfWork
-        external_services/          # implémentation HTTP des ports Vehicles/Pricing/Payment
-          vehicles_client.py, pricing_client.py, payment_client.py
-        messaging/                  # implémentation du port EventPublisher
-          event_publishers.py        # LoggingEventPublisher, RabbitMQEventPublisher
+        persistence/               # database, orm_models, repositories, unit_of_work, migrations
+        external_services/         # vehicles, pricing, payment, parking, http_client, wake_up
+        messaging/event_publishers.py
+        metrics/prometheus_metrics.py
 
-  mocks/
-    server.py                      # simule Vehicles/Pricing/Payment en local
-  scripts/
-    seed_capacity.py                # peuple la capacité réservable pour le dev/test
-  requirements.txt, .env(.example), Dockerfile
+  tests/                           # 112 tests pytest (voir §10)
+  mocks/server.py                  # faux Vehicles / Pricing / Payment pour le local
+  scripts/seed_capacity.py         # capacité de test sans Parking
+  requirements.txt, requirements-dev.txt, pytest.ini, Dockerfile, .env.example
 
-front/
-  app.py                           # interface Streamlit (client final)
-
-docs/
-  projet_fil_rouge_parking_cadrage_metier.md   # cadrage métier partagé par l'équipe
-  booking_test_scenario.md                     # scénario de test manuel
-  booking_architecture.md                      # ce document
+front/app.py                       # interface Streamlit
+monitoring/                        # Prometheus + Grafana (docker compose)
+.github/workflows/ci.yml           # intégration continue
 ```
 
 ---
 
 ## 4. Modèle de données
 
-Le domaine et la persistance ont chacun leur propre représentation, reliées
-par les repositories — c'est le point le plus visible de la séparation
-hexagonale.
-
-| | `domain/entities.py` | `adapters/outbound/persistence/orm_models.py` |
-|---|---|---|
-| Nature | `@dataclass` Python pur | classe SQLAlchemy (`Base`) |
-| Connaît | rien d'autre que lui-même | les colonnes, types SQL, contraintes |
-| Utilisé par | `application/` (métier) | `adapters/outbound/persistence/repositories.py` uniquement |
-
-Les fonctions `_reservation_to_domain`/`_capacity_to_domain` (dans
-`repositories.py`) convertissent une ligne ORM en entité de domaine à la
-lecture ; `add`/`update` font l'inverse à l'écriture. Le reste du code
-(cas d'usage, routes) ne manipule jamais un objet ORM.
+Le domaine (`domain/entities.py`, dataclasses) et la persistance
+(`orm_models.py`, SQLAlchemy) ont chacun leur représentation ; `repositories.py`
+convertit dans les deux sens. Aucun cas d'usage ne manipule un objet ORM.
 
 ### `Reservation`
 
 | Champ | Type | Notes |
 |---|---|---|
-| `id` | `str(6)` | Code à 6 chiffres (`ReservationService._generate_reservation_id`), pas un UUID : c'est la référence que le client communique au parking. Unicité vérifiée via `ReservationRepository.exists`. |
-| `vehicle_id` | `str` | Identifiant pseudonymisé (résolu via Vehicles), jamais la plaque réelle. |
-| `email` | `str` | Email du client, transmis à Messages/Notification à la confirmation. |
-| `place_type` | `PlaceType` | `STANDARD`, `HANDICAPPED`, `ELECTRIC`, `XL`, `TWO_WHEELS` (codes de Parking). Libellés affichés : Standard, PMR, Électrique, XL, Deux-roues (`PlaceType.label`). |
-| `start_at` / `end_at` | `datetime` | Toujours alignés sur une heure pleine (naïfs, UTC). |
-| `status` | `ReservationStatus` | Voir cycle de vie ci-dessous. |
-| `price_amount` | `Decimal` | Renvoyé par Pricing. |
-| `price_reference` | `str` | Référence de la grille tarifaire utilisée (traçabilité). |
-| `payment_id` | `str` | Identifiant du paiement initial côté Payment. |
-| `refund_amount` | `Decimal` | Renseigné uniquement si la réservation est annulée. |
+| `id` | `str(6)` | Code à 6 chiffres, tiré avec `secrets` (il permet de consulter et d'annuler) ; jamais réattribué. |
+| `vehicle_id` | `str` | Identifiant pseudonymisé renvoyé par Vehicles, **jamais la plaque**. |
+| `email` | `str` | Transmis à Messages pour la confirmation. |
+| `place_type` | `PlaceType` | `STANDARD`, `HANDICAPPED`, `ELECTRIC`, `XL`, `TWO_WHEELS` : codes communs à tous les services. |
+| `start_at` / `end_at` | `datetime` | UTC sans fuseau, heures pleines ; `end_at` exclu. |
+| `status` | `ReservationStatus` | Voir cycle de vie. |
+| `price_amount`, `price_reference` | `Decimal`, `str` | Montant et `quote_id` renvoyés par Pricing. |
+| `payment_id` | `str` | Identifiant du paiement chez Payment. |
+| `payment_idempotency_key` | `str` | `booking:{id}:create`, fixée à la création, réutilisée à chaque nouvel essai. |
+| `correlation_id` | `str` | Identifiant de la requête de création, réutilisé à chaque étape ultérieure. |
 
 ### `CapacitySlot`
 
-Un compteur par type de place et par heure pleine — **pas d'affectation
-nominale** d'une place précise, conformément au cadrage (le parking gère un
-stock, pas des places numérotées). `free` (propriété calculée) =
-`allocated - booked`.
+Un compteur par type de place et par heure pleine (`allocated`, `booked`,
+`free = allocated - booked`). **Pas d'affectation d'une place précise** : Booking
+gère un stock réservable, Access attribue la place à l'entrée.
 
-### Cycle de vie d'une réservation
+### Cycle de vie
 
 ```mermaid
 stateDiagram-v2
-    [*] --> pending_payment: POST /v2/booking/reservations
-    pending_payment --> confirmed: webhook Payment (paid)
-    pending_payment --> failed: webhook Payment (refused/cancelled)
-    confirmed --> cancellation_pending: POST /v2/booking/reservations/{id}/cancel
-    cancellation_pending --> cancelled: webhook Payment (refunded)
+    [*] --> pending_payment: POST /reservations
+    pending_payment --> confirmed: Payment ACCEPTED
+    pending_payment --> failed: Payment REFUSED, refus de la demande, Pricing en panne
+    confirmed --> cancelled: POST /reservations/{id}/cancel
     confirmed --> [*]
     failed --> [*]
     cancelled --> [*]
 ```
 
-`pending_payment` et `cancellation_pending` sont les deux seuls états « en
-attente d'un webhook » ; tous les autres sont terminaux.
-`ReservationService.handle_payment_webhook` est écrit comme un `if` sur
-l'état courant : chaque état sait quels statuts de webhook il attend, et
-ignore silencieusement les autres (idempotence — un rejeu réseau ou un
-callback dupliqué n'a pas d'effet une deuxième fois).
+- Chaque transition passe par `transition_status(id, depuis, vers)` : une mise à
+  jour **conditionnelle** en une requête. Deux traitements concurrents (tâche de
+  fond et consultation par le client) ne peuvent pas appliquer deux fois la même
+  transition : un seul publie l'événement, la place n'est libérée qu'une fois.
+- `failed` et `cancelled` libèrent la capacité. Une réservation n'est jamais
+  supprimée : son code reste pris, la clé d'idempotence reste unique.
+
+### Schéma de la base
+
+Pas d'Alembic : `Base.metadata.create_all` crée les tables, et
+`persistence/migrations.py` ajoute au démarrage les colonnes apparues après coup
+(`correlation_id`, `payment_idempotency_key`). En ligne, la base est un
+**Postgres** (`DATABASE_URL`) : le disque Render est effacé à chaque redémarrage.
 
 ---
 
-## 5. Ports & adapters — le détail
+## 5. Ports et adaptateurs
 
-| Port (`app/ports/`) | Rôle | Implémentation (`app/adapters/outbound/`) |
+| Port | Rôle | Implémentation |
 |---|---|---|
-| `ReservationRepository` | CRUD sur les réservations | `SqlAlchemyReservationRepository` |
-| `CapacityRepository` | lecture/écriture de la capacité | `SqlAlchemyCapacityRepository` |
-| `UnitOfWork` | regroupe les deux repos dans une transaction | `SqlAlchemyUnitOfWork` |
-| `VehiclesPort` | résoudre une plaque en id pseudonymisé | `HttpVehiclesClient` |
-| `PricingPort` | obtenir le prix d'un créneau | `HttpPricingClient` |
-| `PaymentPort` | déclencher un paiement | `HttpPaymentClient` |
-| `EventPublisher` | publier un événement métier | `LoggingEventPublisher` / `RabbitMQEventPublisher` |
+| `ReservationRepository`, `CapacityRepository`, `UnitOfWork` | Persistance et transaction | `SqlAlchemy*` |
+| `VehiclesPort` | Plaque → identifiant pseudonymisé | `HttpVehiclesClient` (`POST /api/vehicle/create`) |
+| `PricingPort` | Prix d'un créneau | `HttpPricingClient` (`POST /quote`, mode `reserved`) |
+| `PaymentPort` | Demande et statut de paiement | `HttpPaymentClient` (`POST /payments`, `GET /payments/{id}`, montants en centimes) |
+| `ParkingPort` | Places réservables par type | `HttpParkingClient` (`GET /parking/availability/{type}/booking`) |
+| `EventPublisher` | Événements vers Messages | `RabbitMQEventPublisher`, ou `LoggingEventPublisher` sans `CLOUDAMQP_URL` |
+| `BusinessMetrics` | Compter les opérations métier | `PrometheusBusinessMetrics` (`NoOpBusinessMetrics` par défaut) |
 
-**Unit of Work** : `ReservationService`/`CapacityService` ne committent
-jamais au milieu d'une opération à plusieurs étapes (ex. réserver la
-capacité + créer la réservation + appeler Payment). C'est l'appelant de plus
-haut niveau qui décide quand tout valider (`uow.commit()`) ou tout annuler
-(`uow.rollback()`), pour que ces étapes réussissent ou échouent ensemble —
-exactement comme une transaction SQL classique, mais exprimée indépendamment
-de SQLAlchemy.
+**Câblage** : `adapters/inbound/http/dependencies.py` est le seul fichier qui
+connaît à la fois un port et son implémentation. À chaque requête, il ouvre un
+`SqlAlchemyUnitOfWork` et assemble les cas d'usage. Les tests remplacent ce
+câblage par de faux adaptateurs (`tests/fakes.py`).
 
-**Câblage** (`adapters/inbound/http/dependencies.py`) : à chaque requête,
-FastAPI construit un `SqlAlchemyUnitOfWork` (une session par requête, comme
-avant), puis assemble un `ReservationService`/`CapacityService` avec les
-adaptateurs concrets. C'est le **seul** fichier du projet qui connaît à la
-fois un port et son implémentation réelle — remplacer SQLite par Postgres,
-ou brancher un vrai service Vehicles, ne touche que ce fichier (et
-`config.py` pour l'URL).
+**Réveil des services Render** : sur le plan gratuit, un service en veille met
+30 à 60 s à répondre. Pendant l'appel à Vehicles, Booking réveille Pricing et
+Payment en parallèle (`wake_up`) ; le délai des appels sortants est de 120 s.
 
-**Gestion des erreurs** : le domaine lève des exceptions Python pures
-(`app/domain/exceptions.py` : `InvalidSlotError`, `CapacityUnavailableError`,
-`ReservationNotFoundError`, `InvalidReservationStateError`,
-`ReservationIdGenerationError`, `ExternalServiceError`). Aucune route ne
-fait de `try/except` — `adapters/inbound/http/exception_handlers.py`
-centralise la traduction en code HTTP :
+**Erreurs** : le domaine lève des exceptions pures, traduites en un seul endroit
+(`exception_handlers.py`) :
 
 | Exception | Code |
 |---|---|
 | `InvalidSlotError` | 422 |
-| `CapacityUnavailableError` | 409 |
+| `CapacityUnavailableError`, `CapacityBelowBookedError`, `InvalidReservationStateError` | 409 |
 | `ReservationNotFoundError` | 404 |
-| `InvalidReservationStateError` | 409 |
-| `ReservationIdGenerationError` | 500 |
 | `ExternalServiceError` | 502 |
+| `ReservationIdGenerationError` | 500 |
+| Toute autre exception | 500 générique `{"detail", "correlation_id"}`, détail seulement dans les logs |
 
 ---
 
-## 6. API — vue d'ensemble
+## 6. API
 
-Documentation complète et interactive sur `/docs` (Swagger) une fois l'API
-lancée. Résumé :
+Documentation interactive sur `/docs`. Toutes les routes sont sous `/v2/booking`
+et exigent la clé d'API, sauf `/health`.
 
 | Méthode | Route | Rôle | Appelée par |
 |---|---|---|---|
-| `GET` | `/v2/booking/health` | Supervision | tous |
-| `GET` | `/v2/booking/availability` | Dispo sur un créneau (lecture seule) | front, tests |
-| `POST` | `/v2/booking/reservations` | Créer une réservation | front (client) |
-| `GET` | `/v2/booking/reservations/{id}` | Consulter une réservation | front, client |
-| `GET` | `/v2/booking/reservations?vehicle_id=` | Lister les réservations d'un véhicule | **Access** |
-| `POST` | `/v2/booking/reservations/{id}/cancel` | Annuler une réservation confirmée (remboursement 50%) | front (client) |
-| `PUT` | `/v2/booking/capacity-slots/{place_type}/{slot_start}` | Allouer la capacité réservable d'un créneau | **Parking** |
-| `POST` | `/webhooks/payment` | Callback asynchrone de statut de paiement/remboursement | **Payment** |
+| `GET` | `/health` | Supervision et version (public) | Render, tous |
+| `GET` | `/availability` | Places libres sur un créneau (lecture seule) | front |
+| `POST` | `/reservations` | Créer une réservation (201, `pending_payment`) | front |
+| `GET` | `/reservations/{id}` | Consulter, avec mise à jour du statut de paiement | front |
+| `POST` | `/reservations/{id}/cancel` | Annuler une réservation confirmée, sans remboursement | front |
+| `GET` | `/reservations/valid?vehicle_id=&at=` | Le véhicule a-t-il une réservation valable maintenant ? | **Access** |
+| `GET` | `/reservations?vehicle_id=` | Historique d'un véhicule | debug |
+| `PUT` | `/capacity-slots/{type}/{heure}` | Ajuster la capacité d'un créneau | tests, correction |
+| `POST` | `/capacity-slots/sync` | Forcer la synchronisation avec Parking | exploitation |
+| `GET` | `/metrics` | Métriques Prometheus (X-API-Key ou Bearer) | Prometheus |
+
+`POST /cancel` plutôt que `DELETE` : l'annulation est une **action métier** qui
+change un statut, la réservation n'est pas supprimée (son code reste réservé).
 
 ---
 
-## 7. Flux métier détaillés
+## 7. Flux métier
 
-### 7.1. Création d'une réservation
-
-```mermaid
-sequenceDiagram
-    participant C as Client (front)
-    participant R as routers/reservations.py
-    participant S as ReservationService
-    participant V as VehiclesPort
-    participant Pr as PricingPort
-    participant Pa as PaymentPort
-    participant U as UnitOfWork
-
-    C->>R: POST /v2/booking/reservations
-    R->>S: create_reservation(...)
-    S->>S: validate_slot() [domain/rules.py]
-    S->>U: check_availability / reserve
-    S->>V: resolve_vehicle_id(plate)
-    V-->>S: vehicle_id
-    S->>Pr: get_reservation_price(...)
-    Pr-->>S: PriceQuote
-    S->>Pa: create_payment(idempotency_key=reservation.id)
-    Pa-->>S: PaymentAttempt(status=pending)
-    S->>U: commit()
-    S-->>R: Reservation(pending_payment)
-    R-->>C: 201
-    Note over Pa,S: plus tard, de façon asynchrone
-    Pa-->>R: POST /webhooks/payment (paid)
-    R->>S: handle_payment_webhook(...)
-    S->>S: statut → confirmed, publish("reservation.confirmed")
-```
-
-Points d'implémentation (`ReservationService.create_reservation`) :
-- La disponibilité est vérifiée **tôt** (retour rapide au client) avant de
-  payer le coût d'un appel réseau à Vehicles, puis **re-vérifiée** juste
-  avant de réserver effectivement la capacité, pour couvrir une course entre
-  deux requêtes concurrentes sur le même créneau.
-- `idempotency_key = reservation.id` envoyé à Payment : un retry de cette
-  requête ne doit jamais déclencher un second encaissement.
-- Si Pricing ou Payment échoue, la réservation est supprimée et la capacité
-  libérée (compensation explicite) plutôt que de laisser une réservation
-  bloquée sans paiement associé — l'exception est traduite en
-  `ExternalServiceError` (502).
-
-### 7.2. Annulation avec remboursement de 50%
+### 7.1. Création et paiement
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
+    participant C as Front
     participant S as ReservationService
-    participant Pa as PaymentPort
+    participant V as Vehicles
+    participant Pr as Pricing
+    participant Pa as Payment
+    participant DB as Base
 
-    C->>S: cancel_reservation(id)
-    S->>S: capacité libérée immédiatement<br/>statut → cancellation_pending<br/>refund_amount = price/2
-    S->>Pa: create_payment(même reference, montant = price/2, idempotency_key = id:cancel)
-    Pa-->>S: PaymentAttempt(status=pending)
-    S-->>C: 200 (cancellation_pending)
-    Note over Pa,S: plus tard, de façon asynchrone
-    Pa-->>S: POST /webhooks/payment (refunded)
-    S->>S: statut → cancelled, publish("reservation.cancelled")
+    C->>S: POST /reservations
+    S->>S: validate_slot (heures pleines, 30 jours, 7 jours max)
+    S->>DB: capacité disponible ?
+    par réveil en parallèle
+        S->>V: plaque -> vehicle_id
+        S->>Pr: wake_up
+        S->>Pa: wake_up
+    end
+    S->>DB: réserver la capacité, créer la réservation
+    S->>Pr: POST /quote
+    S->>DB: commit (réservation + clé booking:{id}:create)
+    S->>Pa: POST /payments (clé d'idempotence)
+    Pa-->>S: 202 PENDING + payment_id
+    S-->>C: 201 pending_payment
+    loop tâche de fond, toutes les 5 s, 180 s max
+        S->>Pa: GET /payments/{id}
+    end
+    Pa-->>S: ACCEPTED
+    S->>DB: pending_payment -> confirmed
+    S-)Messages: booking.confirmed
 ```
 
-Seules les réservations `confirmed` sont annulables (`InvalidReservationStateError`
-→ 409 sinon). La capacité est libérée **immédiatement** à la demande
-d'annulation — le parking peut revendre le créneau sans attendre que le
-remboursement soit effectivement traité côté Payment.
+- La disponibilité est vérifiée **avant** d'appeler Vehicles (réponse rapide si
+  complet), puis la réservation de capacité vérifie chaque heure à nouveau.
+- La réservation est **commitée avant l'appel à Payment** : si Booking s'arrête
+  pendant l'appel, la réservation et sa clé existent toujours.
+- Issue de `POST /payments` :
+  - 202 : `payment_id` enregistré ;
+  - 422 : refus certain, réservation `failed`, place libérée, 502 au client ;
+  - timeout, réseau, 5xx, 401, 409 : **issue inconnue**, la réservation reste en
+    attente et la demande sera renvoyée **avec la même clé** (Payment renvoie
+    alors le paiement existant : jamais de double débit).
+- Pricing en panne : aucun paiement demandé, réservation `failed`, place libérée, 502.
+- Vehicles en panne : rien n'est réservé, 502.
 
-⚠️ **Hypothèse de contrat à valider avec Payment** : Booking rappelle
-`create_payment` avec la **même** `reference` (l'id de réservation) mais un
-montant à moitié prix, et suppose que Payment détecte l'écart avec ce qu'il
-a déjà encaissé pour cette référence et déclenche un remboursement de la
-différence. C'est une convention posée côté Booking pour ce MVP, pas un
-contrat déjà négocié avec l'implémentation réelle de Payment — le mock
-(`mocks/server.py`) la simule à l'identique pour permettre de développer et
-tester en attendant.
+### 7.2. Suivi du paiement
 
-### 7.3. Idempotence du webhook
+`sync_payment_status` applique le statut de Payment à une réservation en attente.
+Il est appelé par la tâche de fond, par `GET /reservations/{id}` et par
+`GET /reservations/valid`. Si la tâche de fond a été coupée (redémarrage Render),
+la consultation suivante termine le travail. Idempotent grâce à `transition_status`.
 
-`ReservationService.handle_payment_webhook` corrèle uniquement sur
-`reference` (l'id de réservation) — pas sur `payment_id`, qui peut
-légitimement différer entre le paiement initial et un remboursement. Le
-comportement dépend de l'état courant de la réservation :
+### 7.3. Vérification par Access
 
-- `pending_payment` : attend `paid` (→ `confirmed`) ou `refused`/`cancelled`
-  (→ `failed`, capacité libérée) ; `pending` ne fait rien.
-- `cancellation_pending` : attend `refunded` (→ `cancelled`) ; tout le reste
-  ne fait rien.
-- Tout autre état (déjà terminal) : le callback est ignoré — un rejeu réseau
-  ou un webhook dupliqué n'a plus d'effet.
+Valable si `confirmed` et `start_at <= at < end_at` (début inclus, fin exclue, sans
+tolérance). Toujours 200 : `valid` porte la réponse, avec le type de place réservé
+et sans l'e-mail. Une réservation encore `pending_payment` est d'abord revérifiée
+auprès de Payment : un client qui a payé n'est pas bloqué à la barrière.
+
+### 7.4. Annulation
+
+Seule une réservation `confirmed` est annulable (409 sinon). Passage à `cancelled`,
+place libérée immédiatement, événement `booking.cancelled`. **Aucun remboursement** :
+Payment ne gère pas les remboursements. Le cadrage métier (§2.7) prévoyait une
+réservation non annulable : c'est une extension assumée.
+
+### 7.5. Capacité depuis Parking
+
+Au démarrage puis toutes les heures, `ParkingSyncService` lit pour chaque type
+`spot_available` chez Parking et l'applique à chaque heure des 30 prochains jours
+(+ 7 jours de durée maximale). Une heure n'est **jamais** ramenée sous le nombre de
+places déjà réservées.
+
+⚠️ **Point de friction** : Parking a confirmé que `spot_available` est le nombre de
+places **libres à l'instant**, pas un quota réservé à Booking. Booking s'en sert
+pourtant comme capacité de toutes les heures à venir :
+- si le parking est plein maintenant, plus aucune réservation n'est possible pour
+  la semaine suivante ;
+- s'il est vide, Booking peut promettre toutes les places sur un créneau futur où
+  des clients sans réservation seront peut-être déjà garés.
+
+Le bon contrat serait un **quota réservable** par type, fixé par Parking
+indépendamment de l'occupation. Faute de temps avant le rendu, ce point est
+documenté et non corrigé ; `PUT /capacity-slots` permet d'ajuster un créneau à la main.
 
 ---
 
 ## 8. Bus d'événements (RabbitMQ / CloudAMQP)
 
-À la confirmation et à l'annulation d'une réservation, Booking publie un
-événement consommé par le service **Messages/Notification** :
-
-| Événement interne | Routing key AMQP | Champ `event` du message |
+| Événement interne | Routing key | Champ `event` |
 |---|---|---|
 | `reservation.confirmed` | `booking.confirmed` | `RESERVATION_CONFIRMED` |
 | `reservation.cancelled` | `booking.cancelled` | `RESERVATION_CANCELLED` |
 
-Exchange : `microservice-event-bus` (nom configurable via
-`EVENT_BUS_EXCHANGE`). Implémentation dans
-`adapters/outbound/messaging/event_publishers.py` :
-- `RabbitMQEventPublisher` : utilisée dès que `CLOUDAMQP_URL` est configurée.
-  Ouvre une connexion pika, publie, referme (pas de pool de connexions —
-  volume d'événements faible pour ce MVP).
-- `LoggingEventPublisher` : utilisée sinon (dev sans bus réel) — logge
-  l'événement au lieu de le publier.
+Format confirmé avec Messages. Exchange `microservice-event-bus`
+(`EVENT_BUS_EXCHANGE`). Le payload contient code, `vehicle_id`, e-mail, type de
+place (code et libellé), créneau, et pour la confirmation montant et `payment_id`.
+L'identifiant de corrélation part dans la propriété AMQP `correlation_id` et
+l'en-tête `X-Correlation-ID`.
 
-`adapters/inbound/http/dependencies.py` choisit l'implémentation une seule
-fois au démarrage (`build_event_publisher`), selon la config — le reste du
-code ne dépend que du port `EventPublisher`.
-
-⚠️ **Tester en local sans toucher au bus partagé** : `CLOUDAMQP_URL` étant
-lue depuis `.env`, la façon fiable de désactiver temporairement la
-publication réelle est d'éditer directement cette ligne dans `.env` (la
-vider, tester, la restaurer) — **positionner `$env:CLOUDAMQP_URL` dans
-PowerShell avant de lancer `uvicorn` ne fonctionne pas** : une variable
-d'environnement PowerShell assignée à une chaîne vide n'est pas transmise au
-process enfant (`os.environ` ne la voit pas), donc `pydantic-settings`
-retombe silencieusement sur la valeur de `.env`. Deux événements de test
-sont partis sur le bus partagé à cause de ce piège pendant le développement
-— sans conséquence réelle (données fictives, email en `@example.com`), mais
-à garder en tête.
+Une panne du bus ne fait pas échouer la requête : le statut est déjà validé en
+base, l'événement perdu est logué en `ERROR` pour être renvoyé à la main
+(limite connue, voir §13).
 
 ---
 
-## 9. Configuration
+## 9. Observabilité
 
-Toutes les valeurs sont dans `app/config.py` (`pydantic-settings`), lues
-depuis l'environnement ou un fichier `.env` (voir `.env.example`) :
+### 9.1. Identifiant de corrélation
 
-| Variable | Défaut | Rôle |
+`X-Correlation-ID` est repris de l'appelant (s'il est valide : 128 caractères
+alphanumériques au plus) ou généré, puis :
+- écrit dans chaque ligne de log (filtre de logging) ;
+- renvoyé dans la réponse ;
+- transmis à Vehicles, Pricing, Payment, Parking et dans les événements RabbitMQ ;
+- **stocké avec la réservation** : la confirmation, l'échec ou l'annulation, même
+  déclenchés plus tard par une autre requête, portent l'identifiant du parcours d'origine.
+
+### 9.2. Logs
+
+Console, plus un fichier par jour dans `LOG_DIR` (14 jours). Sur Render, `LOG_DIR`
+est vide : console seule, lisible dans l'onglet *Logs*. Jamais de plaque, de clé ni
+de valeur reçue dans un log de validation.
+
+### 9.3. Métriques (`GET /v2/booking/metrics`)
+
+| Métrique | Labels | Sens |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./booking.db` | SQLite en dev, Postgres en prod (Render) sans changer le code. |
-| `VEHICLES_SERVICE_URL` | mock local (`:9000`) | À remplacer par la vraie URL de Vehicles. |
-| `PRICING_SERVICE_URL` | mock local (`:9000`) | Idem pour Pricing. |
-| `PAYMENT_SERVICE_URL` | mock local (`:9000`) | Idem pour Payment. |
-| `BOOKING_PUBLIC_URL` | `http://localhost:8000` | URL publique de Booking, transmise à Payment pour le webhook. |
-| `PAYMENT_WEBHOOK_PATH` | `/webhooks/payment` | |
-| `RESERVATION_HORIZON_DAYS` | `30` | Règle métier : horizon de réservation. |
-| `RESERVATION_MAX_DURATION_HOURS` | `168` (7j) | Règle métier : durée max, alignée sur le plafond de stationnement. |
-| `CLOUDAMQP_URL` | vide | Bus d'événements ; vide = `LoggingEventPublisher` (voir §8). |
-| `EVENT_BUS_EXCHANGE` | `microservice-event-bus` | Exchange RabbitMQ partagé avec l'équipe. |
+| `http_requests_total` | `method`, `route`, `status`, `outcome` | Trafic HTTP |
+| `http_request_duration_seconds` | `method`, `route` | Durée, jusqu'à l'envoi de la réponse (hors tâches de fond), seuils de 10 ms à 120 s |
+| `parking_operations_total` | `service`, `operation`, `result` | Réservations, paiements, annulations, vérifications Access, synchros de capacité |
 
-`Settings` (la classe elle-même) est passée telle quelle à `ReservationService`
-plutôt que ses champs un par un : c'est de la donnée de configuration, pas
-une dépendance infrastructurelle, donc pragmatiquement acceptable même dans
-une architecture hexagonale stricte.
+`route` est le **modèle** de route (`/reservations/{reservation_id}`), jamais l'URL
+réelle : le nombre de séries reste fini. Le tableau de bord Grafana
+(`monitoring/`) montre disponibilité des services, trafic, erreurs, opérations
+métier et latence p50 / p95 / p99.
 
 ---
 
-## 10. Mocks et script de seed
+## 10. Sécurité, tests et CI
 
-Tant que Vehicles/Pricing/Payment ne sont pas prêts côté équipe,
-`mocks/server.py` (un FastAPI séparé, port 9000, **hors de l'hexagone** —
-c'est un test double, pas une partie de l'architecture de Booking) simule
-les trois :
+### Sécurité
 
-- `POST /vehicles/resolve` → hash de la plaque.
-- `POST /pricing/reservation` → tarif simple par type de place × durée.
-- `POST /payment/payments` → répond `pending`, puis confirme (`paid`) après
-  3s via le webhook. Détecte aussi le cas remboursement (même `reference`,
-  montant différent d'un paiement déjà `paid`) et répond `refunded` après 2s.
-- `POST /payment/payments/{id}/force-status` : **outil de test uniquement**,
-  déclenche immédiatement le webhook avec le statut demandé (`paid`,
-  `refused`, `cancelled`, `refunded`).
+| Mesure | Détail |
+|---|---|
+| Clé d'API unique | `API_KEY`, en-tête `X-API-Key`, sur toutes les routes sauf `/health` ; partagée avec le front et Access. `/metrics` accepte aussi `Authorization: Bearer` (format de Prometheus). |
+| Comparaison | Temps constant (`hmac.compare_digest`) ; 401 sans clé ou clé fausse. |
+| Échec fermé | Sans `API_KEY` configurée, tout est refusé (et signalé au démarrage). |
+| Entrées | Plaque 2 à 20 caractères `[A-Za-z0-9 -]`, e-mail validé, `vehicle_id` 128 caractères, code de réservation `^\d{6}$`. |
+| Erreurs | 500 générique avec `correlation_id`, détail seulement dans les logs. |
+| En-têtes | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. |
+| Secrets | Jamais dans Git (variables Render, `.env` ignoré) ; clés sortantes par service (`*_API_KEY`). |
+| Conteneurs | Utilisateur non-root, image Prometheus en version fixe. |
 
-La base démarre vide : tant que rien n'a été poussé via `PUT /v2/booking/capacity-slots/{place_type}/{slot_start}`, la
-capacité vaut `0/0` partout (409 attendu). `scripts/seed_capacity.py` pousse
-une capacité par défaut (`STANDARD=10, XL=3, HANDICAPPED=2, ELECTRIC=3,
-TWO_WHEELS=5`) sur chaque heure des prochains jours, en attendant que le
-service Parking existe réellement.
+Le choix d'**une seule clé** plutôt qu'une clé par appelant avec des droits
+différents est volontaire : plus simple à distribuer, suffisant pour ne plus
+exposer le service librement.
+
+### Tests (`api/V1/booking/tests/`, 112 tests)
+
+Base SQLite jetable, clé de test, faux Vehicles / Pricing / Payment / bus
+(`tests/fakes.py`) : aucun appel réseau. Couvrent les règles de créneau, la
+capacité, tout le parcours de réservation et ses pannes, les 10 cas Access, les
+routes HTTP, la sécurité, le correlation ID et les métriques.
+
+### Intégration continue (`.github/workflows/ci.yml`)
+
+À chaque push, pull request et tag `v*` : lint `ruff`, tests `pytest`, SAST
+`bandit`, SCA `pip-audit`, recherche de secrets `gitleaks` sur tout l'historique,
+puis build des deux images Docker et démarrage de l'API sur `/health`. Sur un tag,
+la CI vérifie qu'il correspond à `app.__version__`. Render ne déploie qu'un commit
+dont la CI est verte (*After CI Checks Pass*).
 
 ---
 
-## 11. Front (Streamlit)
+## 11. Configuration
 
-`front/app.py` est un client minimal : formulaire de réservation (plaque,
-email, type de place, créneau — vérifier la dispo, réserver, suivre le
-statut jusqu'à `confirmed`/`failed`) et une section séparée pour annuler une
-réservation existante à partir de son code à 6 chiffres (suivi jusqu'à
-`cancelled`). Il ne fait qu'appeler l'API HTTP de Booking
-(`BOOKING_API_URL`) — aucune logique métier côté front, et aucune
-connaissance de la structure interne de Booking (il consomme l'API comme le
-ferait n'importe quel autre client).
+Lue par `app/config.py` (`pydantic-settings`) depuis l'environnement ou `.env`
+(modèle : `.env.example`). Liste complète dans le README ; les principales :
+
+| Variable | Rôle |
+|---|---|
+| `DATABASE_URL` | SQLite en local, Postgres en ligne (URL collée telle quelle, forcée sur psycopg 3). |
+| `API_KEY` | Clé entrante de Booking. |
+| `VEHICLES_SERVICE_URL`, `PRICING_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `PARKING_SERVICE_URL` | Services appelés (mocks locaux par défaut ; Parking vide = pas de synchro). |
+| `VEHICLES_API_KEY`, `PRICING_API_KEY`, `PAYMENT_API_KEY`, `PARKING_API_KEY` | Clés sortantes. |
+| `CLOUDAMQP_URL`, `EVENT_BUS_EXCHANGE` | Bus d'événements (vide = simple log). |
+| `PAYMENT_POLL_INTERVAL_SECONDS`, `PAYMENT_POLL_TIMEOUT_SECONDS` | Suivi du paiement (5 s, 180 s). |
+| `HTTP_TIMEOUT_SECONDS` | 120 s, pour les réveils Render. |
+| `RESERVATION_HORIZON_DAYS`, `RESERVATION_MAX_DURATION_HOURS` | 30 jours, 168 h. |
+| `LOG_LEVEL`, `LOG_DIR`, `LOG_RETENTION_DAYS` | Logs. |
+
+⚠️ En PowerShell, `$env:VAR = ""` ne transmet pas une variable vide au processus :
+`pydantic-settings` reprend alors la valeur du `.env`. Pour couper le bus en local,
+vider la ligne dans `.env`.
 
 ---
 
-## 12. Comment étendre le service (mini cookbook)
+## 12. Mocks, front et extension
+
+**Mocks** (`mocks/server.py`, port 9000, hors de l'hexagone) : mêmes contrats que
+les vrais services. Vehicles renvoie un code, Pricing un tarif simple, Payment
+répond `PENDING` puis `ACCEPTED` après quelques secondes ;
+`POST /payment/payments/{id}/force-status` force `REFUSED` pour les tests.
+
+**Front** (`front/app.py`) : client Streamlit en heure de Paris (disponibilité,
+réservation, suivi du paiement, annulation par code). Il envoie la clé
+(`BOOKING_API_KEY`) côté serveur : elle n'arrive jamais dans le navigateur.
 
 | Je veux... | Je touche... |
 |---|---|
-| Ajouter/modifier une règle métier (ex. horaires, durées) | `domain/rules.py` (et ses appelants dans `application/`) |
-| Ajouter un champ à une réservation | `domain/entities.py` + `orm_models.py` + `repositories.py` (mapping) + `schemas.py` (si exposé en HTTP) |
-| Ajouter un cas d'usage (ex. prolonger une réservation) | une méthode dans `application/reservation_service.py`, utilisée par une nouvelle route dans `adapters/inbound/http/routers/` |
-| Ajouter une route HTTP | `adapters/inbound/http/routers/` + l'enregistrer dans `main.py` |
-| Changer de base de données | uniquement `DATABASE_URL` (`config.py`) — `application/` n'y touche pas |
-| Remplacer un mock par le vrai service (Vehicles/Pricing/Payment) | uniquement l'URL correspondante dans `.env` — aucun code à changer |
-| Ajouter un nouveau service externe à appeler | un port dans `ports/external_services.py` + un adaptateur dans `adapters/outbound/external_services/` + le brancher dans `dependencies.py` |
-| Changer de broker d'événements | une nouvelle classe dans `adapters/outbound/messaging/event_publishers.py` implémentant `EventPublisher` |
-| Ajouter un point d'entrée non-HTTP (ex. CLI, consommateur d'événements) | un nouveau dossier sous `adapters/inbound/`, qui appelle `application/` comme le fait `adapters/inbound/http/` |
-| Tester `application/` sans base de données ni réseau | implémenter des faux adaptateurs (`UnitOfWork`, `VehiclesPort`...) en mémoire — possible précisément parce que `application/` ne dépend que des ports |
+| Changer une règle de créneau | `domain/rules.py` (+ `tests/test_rules.py`) |
+| Ajouter un champ à une réservation | `entities.py`, `orm_models.py`, `repositories.py`, `migrations.py`, `schemas.py` |
+| Ajouter un cas d'usage | une méthode dans `application/`, une route dans `routers/` |
+| Brancher un nouveau service externe | un port dans `ports/`, un adaptateur dans `outbound/external_services/`, le câblage dans `dependencies.py`, un faux dans `tests/fakes.py` |
+| Changer de base ou de broker | `DATABASE_URL`, ou une classe implémentant `EventPublisher` |
+| Sortir une nouvelle version | `app/__init__.py` puis tag `vX.Y.Z` |
 
 ---
 
-## 13. Limites connues du MVP
+## 13. Limites connues
 
-- **Pas de migrations** (pas d'Alembic) : un changement de schéma nécessite
-  de supprimer `booking.db` en dev, ou une intervention manuelle (`ALTER
-  TABLE`) pour ne pas perdre de données de test.
-- **Mocks non persistants** : `PAYMENTS`/`IDEMPOTENCY` dans `mocks/server.py`
-  sont en mémoire, perdus à chaque redémarrage du mock.
-- **Contrat de remboursement non négocié** avec le service Payment réel (voir §7.2).
-- **Concurrence** : la réservation de capacité n'utilise pas de verrou
-  pessimiste (`SELECT ... FOR UPDATE`) — suffisant pour SQLite/le volume
-  attendu en MVP, à revoir si Postgres + forte concurrence.
-- **Pas d'authentification** sur l'API (hors périmètre MVP, cf. cadrage
-  métier général).
-- Le cadrage métier d'origine (§2.7) indique qu'une réservation n'est « ni
-  annulable ni modifiable » — l'annulation avec remboursement partiel est une
-  extension ajoutée après coup, à faire valider avec l'équipe si le document
-  de cadrage fait référence.
-- Un seul adaptateur entrant existe aujourd'hui (HTTP). L'architecture
-  permet d'en ajouter d'autres (voir §12) mais ce n'est pas fait.
+- **Capacité depuis Parking** : `spot_available` est un stock libre à l'instant,
+  utilisé comme quota futur (voir §7.5).
+- **Événements perdus** si le bus est en panne : logués, à renvoyer à la main.
+  Correction prévue : un *outbox* (événements stockés en base et renvoyés en tâche de fond).
+- **Concurrence** : pas de verrou `SELECT ... FOR UPDATE` sur la capacité ; les
+  transitions de statut sont protégées, la réservation de capacité simultanée
+  sur la dernière place reste théoriquement possible sous forte charge.
+- **Pas d'Alembic** : migrations minimales au démarrage.
+- **Annulation sans remboursement**, extension par rapport au cadrage (non annulable).
+- **Pas de limite de débit** sur `POST /reservations`.
