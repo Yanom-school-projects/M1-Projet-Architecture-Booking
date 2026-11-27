@@ -14,7 +14,7 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 ## Version
 
-**0.4.0**, renvoyée par `GET /v2/booking/health`.
+**2.5.0**, renvoyée par `GET /v2/booking/health`.
 
 Dernière mise à jour : **27 novembre**.
 
@@ -41,7 +41,7 @@ Dernière mise à jour : **27 novembre**.
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
 | Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus. Pas de tests automatisés. |
 | CI/CD | 1 | Redéploiement automatique Render à chaque push sur `main`, sans tests ni contrôles. |
-| Sécurité | 1 | Secrets hors de Git, identifiants jamais logués. Routes entrantes pas encore protégées. |
+| Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
 Reste à faire avant le rendu : [todolist.md](todolist.md).
 
@@ -98,6 +98,8 @@ Notification (champ `place_type_label` des événements, à côté du code `plac
 | POST | `/v2/booking/capacity-slots/sync` | Relancer la synchronisation de capacité avec Parking |
 | GET | `/v2/booking/metrics` | Métriques au format Prometheus (hors Swagger) |
 
+Toutes ces routes, sauf `/health`, exigent la clé d'API : voir [Sécurité](#sécurité).
+
 Toutes les dates sont en **UTC**. Une date envoyée avec un fuseau (`2026-11-02T14:00:00+01:00`) est
 convertie, une date sans fuseau est lue comme de l'UTC, et les réponses se terminent par `Z`.
 
@@ -108,7 +110,7 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 
 ### En ligne
 
-1. Ouvrir le Swagger (`/docs`).
+1. Ouvrir le Swagger (`/docs`), cliquer sur **Authorize** et coller la clé d'API.
 2. `GET /v2/booking/availability` avec `place_type=STANDARD` et un créneau futur sur des heures pleines, par exemple
    `start_at=2026-11-02T14:00:00Z` et `end_at=2026-11-02T16:00:00Z`.
 3. `POST /v2/booking/reservations` :
@@ -152,15 +154,19 @@ cd front
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements.txt
 $env:BOOKING_API_URL = "http://localhost:8000"
+$env:BOOKING_API_KEY = "<même valeur que API_KEY>"
 .\.venv\Scripts\python -m streamlit run app.py
 ```
 
-Sans Parking, remplir la capacité à la main : `python scripts/seed_capacity.py --days 3`.
+Sans Parking, remplir la capacité à la main (route admin) :
+`$env:API_KEY = "..."; python scripts/seed_capacity.py --days 3`.
 
 ### Avec Docker Compose (API + front + Prometheus + Grafana)
 
-Prérequis : `api/V1/booking/.env` rempli. Pour superviser Access, mettre son jeton dans
-`monitoring/prometheus/secrets/access_metrics_token` (dossier ignoré par Git).
+Prérequis : `api/V1/booking/.env` rempli, et `.env` à la racine copié depuis `.env.example`
+(clé d'API du front, mot de passe Grafana : compose refuse de démarrer s'ils manquent). Prometheus lit la clé de Booking dans
+`monitoring/prometheus/secrets/booking_api_key` et le jeton d'Access dans `.../access_metrics_token`
+(dossier ignoré par Git, un fichier = la valeur seule).
 
 ```powershell
 docker compose up -d --build
@@ -171,7 +177,7 @@ docker compose up -d --build
 | Booking | http://localhost:8000/docs |
 | Front | http://localhost:8501 |
 | Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 (tableau de bord « Parking Management : supervision ») |
+| Grafana | http://localhost:3000 (admin / `GRAFANA_ADMIN_PASSWORD`, consultation anonyme en lecture seule) |
 
 Base SQLite et logs dans un volume Docker : ils survivent à un `docker compose down` / `up`.
 Démo de panne : `docker compose stop booking`, la cible passe à `up = 0` dans Grafana.
@@ -203,14 +209,17 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 |---|---|
 | `DATABASE_URL` | Base de données : SQLite par défaut, Postgres en ligne (`postgresql://...` collée telle quelle) |
 | `VEHICLES_SERVICE_URL`, `PRICING_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `PARKING_SERVICE_URL` | URL des services |
-| `VEHICLES_API_KEY`, `PRICING_API_KEY`, `PAYMENT_API_KEY`, `PARKING_API_KEY` | Clés envoyées dans l'en-tête `X-API-Key` (vide = pas d'en-tête) |
+| `VEHICLES_API_KEY`, `PRICING_API_KEY`, `PAYMENT_API_KEY`, `PARKING_API_KEY` | Clés **sortantes**, envoyées par Booking aux autres services dans `X-API-Key` (vide = pas d'en-tête) |
+| `API_KEY` | Clé **entrante**, attendue par Booking sur les routes métier et `/metrics` (voir [Sécurité](#sécurité)). Vide = tout est refusé |
 | `CLOUDAMQP_URL`, `EVENT_BUS_EXCHANGE` | Bus d'événements (vide = événements seulement écrits dans les logs) |
 | `PAYMENT_POLL_INTERVAL_SECONDS`, `PAYMENT_POLL_TIMEOUT_SECONDS` | Suivi du paiement (5 s, 180 s) |
 | `PARKING_SYNC_INTERVAL_SECONDS` | Synchronisation avec Parking (3600 s) |
 | `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (120 s, le temps qu'un service Render se réveille) |
 | `LOG_LEVEL`, `LOG_DIR`, `LOG_RETENTION_DAYS` | Niveau de log, dossier des fichiers de logs (vide = console seule, conseillé sur Render), rétention (14 jours) |
 | `VEHICLES_FALLBACK_ENABLED` | **Temporaire.** `true` : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule (empreinte de la plaque, préfixe `tmp-`) au lieu de renvoyer 502. `false` par défaut |
-| `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours |
+| `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours. Sans elle, le mode secours reste coupé |
+
+Côté front : `BOOKING_API_URL` et `BOOKING_API_KEY` (valeur de `API_KEY`).
 
 ## Déploiement (Render)
 
@@ -221,7 +230,44 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 | Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `streamlit run app.py --server.port $PORT --server.address 0.0.0.0` |
 | Health Check | `/v2/booking/health` | — |
 
+Variables à définir dans Render (onglet *Environment*) : celles de la section Configuration pour l'API,
+`BOOKING_API_URL` et `BOOKING_API_KEY` pour le front.
+
 Chaque push sur `main` redéploie les deux services.
+
+## Sécurité
+
+**Authentification par clé d'API.** Une seule clé, `API_KEY`, lue dans les variables d'environnement (jamais
+dans Git) et partagée avec les appelants de Booking : le front, Access et Prometheus.
+
+| Accès | Routes |
+|---|---|
+| Clé exigée (`X-API-Key`) | toutes les routes métier : disponibilité, réservations, vérification Access, capacité, synchronisation |
+| Clé exigée (`X-API-Key` ou `Authorization: Bearer`, format de Prometheus) | `/v2/booking/metrics` |
+| Public | `GET /v2/booking/health` (health check Render), `/docs`, `/openapi.json` |
+
+- Sans clé ou clé fausse : **401**.
+- Comparaison en temps constant (`hmac.compare_digest`), clé jamais écrite dans les logs.
+- Sans `API_KEY` configurée, les routes protégées refusent tout (le service **échoue fermé**) et le signalent au démarrage.
+- Le front Streamlit appelle Booking côté serveur : la clé n'est jamais envoyée au navigateur.
+- Générer une clé : `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
+**Validation des entrées.** Schémas Pydantic : types de place limités à la nomenclature, dates contrôlées
+(heures pleines, horizon, durée), e-mail validé, plaque limitée à 20 caractères (lettres, chiffres, espaces,
+tirets), code de réservation à 6 chiffres, `vehicle_id` limité à 128 caractères, capacité positive.
+
+**Erreurs.** Les erreurs métier renvoient un message court (`detail`). Une erreur imprévue renvoie
+`500 {"detail": "Erreur interne du service Booking", "correlation_id": "..."}` : la trace complète reste dans
+les logs, retrouvable par l'identifiant de corrélation. Les valeurs reçues (plaque, e-mail) ne sont jamais
+journalisées.
+
+**Secrets.** Fichiers `.env` et jetons Prometheus ignorés par Git, modèles `.env.example` sans valeur,
+mot de passe Grafana et clé du front lus dans `.env` par Docker Compose, plus de secret par défaut dans le code.
+
+**En-têtes HTTP.** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`
+et `Cache-Control: no-store` sur les réponses de l'API.
+
+**Conteneurs.** API et front tournent avec un utilisateur sans privilèges ; image Prometheus en version fixe.
 
 ## Architecture
 

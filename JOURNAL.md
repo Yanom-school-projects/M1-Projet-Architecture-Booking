@@ -141,13 +141,25 @@ Suite
 
 Fait
 - consignes de fin de projet récupérées (`consignes/`), analyse de l'écart avec le code : [todolist.md](todolist.md) ;
-- README mis à jour (URL Render, état de maturité, observabilité, Docker Compose).
+- README mis à jour (URL Render, état de maturité, observabilité, Docker Compose) ;
+- **sécurisation (version 2.5.0)** :
+  - une clé d'API unique (`API_KEY`, en-tête `X-API-Key`) sur toutes les routes métier, partagée avec le front et Access ; 401 sans clé ou clé fausse ; seul `/health` reste public ;
+  - `/metrics` protégé par la même clé, acceptée aussi en `Authorization: Bearer` pour Prometheus (lue depuis un fichier ignoré par Git) ;
+  - comparaison en temps constant, jamais de clé dans les logs, tout refusé si la clé n'est pas configurée ;
+  - une clé par appelant avec des droits différents a été envisagée puis écartée : trop lourd pour le besoin, une clé suffit à ne plus exposer le service librement ;
+  - entrées resserrées : plaque (20 caractères, lettres/chiffres/espaces/tirets), `vehicle_id` (128 caractères), code d'annulation vérifié dans le front avant de construire l'URL ;
+  - erreur imprévue : réponse 500 générique avec l'identifiant de corrélation, détail seulement dans les logs ;
+  - plus de secret par défaut : mode secours Vehicles coupé sans `VEHICLES_FALLBACK_SECRET`, mot de passe Grafana et clé du front lus dans un `.env` ;
+  - en-têtes de sécurité HTTP, conteneurs API et front non-root, image Prometheus en version fixe ;
+  - vérifié avec un script TestClient : 401 sans clé ou clé fausse sur chaque route, 200 avec la clé, `/metrics` en X-API-Key et en Bearer, plaque invalide, 500 sans détail.
 
 Problèmes
-- aucun test automatisé dans le dépôt, aucune route entrante protégée.
+- la clé doit être transmise à l'équipe Access, sinon leurs vérifications reçoivent 401 ;
+- la clé doit être ajoutée dans Render (API et front) avant le prochain déploiement ;
+- toujours aucun test automatisé dans le dépôt.
 
 Suite
-- clés d'API sur les routes sensibles, tests pytest, pipeline GitHub Actions avec déploiement conditionné aux tests.
+- tests pytest (dont ceux de la sécurité), pipeline GitHub Actions avec déploiement conditionné aux tests.
 
 ---
 
