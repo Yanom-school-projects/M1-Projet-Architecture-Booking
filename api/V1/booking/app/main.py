@@ -101,10 +101,6 @@ def _log_startup_config() -> None:
         logger.warning("CLOUDAMQP_URL vide : les événements ne sont PAS envoyés à Messages, seulement logués")
     if not settings.parking_service_url:
         logger.warning("PARKING_SERVICE_URL vide : pas de synchro de capacité, seul PUT /capacity-slots l'alimente")
-    if settings.vehicles_fallback_enabled and not settings.vehicles_fallback_secret:
-        logger.warning("VEHICLES_FALLBACK_SECRET vide : secours Vehicles NON activé malgré VEHICLES_FALLBACK_ENABLED")
-    elif settings.vehicles_fallback_enabled:
-        logger.warning("TEMPORAIRE : secours Vehicles activé, identifiants calculés par Booking si Vehicles tombe")
     if not settings.api_key:
         # Échec fermé : sans clé configurée, les routes protégées refusent tout.
         logger.warning("API_KEY vide : toutes les routes métier et /metrics refusent les appels (401)")

@@ -36,14 +36,6 @@ class Settings(BaseSettings):
     # refusent les appels.
     api_key: str = ""
 
-    # TEMPORAIRE : si Vehicles ne répond pas, Booking calcule lui-même un
-    # identifiant (empreinte de la plaque, préfixe `tmp-`) au lieu de
-    # renvoyer 502. Désactivé par défaut. Voir vehicles_fallback.py.
-    # Pas de secret par défaut : sans VEHICLES_FALLBACK_SECRET, le mode
-    # secours reste coupé même si VEHICLES_FALLBACK_ENABLED=true.
-    vehicles_fallback_enabled: bool = False
-    vehicles_fallback_secret: str = ""
-
     # Payment ne rappelle pas Booking : c'est Booking qui interroge
     # GET /payments/{id} jusqu'au statut final (ACCEPTED ou REFUSED).
     payment_poll_interval_seconds: float = 5.0

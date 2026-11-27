@@ -23,7 +23,6 @@ os.environ.update(
         "CLOUDAMQP_URL": "",
         "PARKING_SERVICE_URL": "",
         "LOG_DIR": "",
-        "VEHICLES_FALLBACK_ENABLED": "false",
         # Pas de boucle de suivi du paiement après POST /reservations : les
         # tests font avancer le paiement eux-mêmes (voir FakePayment).
         "PAYMENT_POLL_TIMEOUT_SECONDS": "0",
