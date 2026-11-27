@@ -163,6 +163,7 @@ Fait
   - build des deux images Docker, puis démarrage de l'API et appel de `/health` ;
   - le déploiement reste l'auto-deploy de Render, à régler sur « After CI Checks Pass » pour attendre la CI ;
 - bandit a relevé que le code de réservation était tiré avec `random` : il sert à consulter et annuler une réservation, il est maintenant tiré avec `secrets` ;
+- **recherche de secrets** : historique Git vérifié à la main (aucun `.env`, fichier de secret ni URL avec identifiants), puis job `gitleaks` ajouté à la CI sur tout l'historique, à chaque push ;
 - mise en ligne vérifiée : clé d'API dans Render et transmise à Access, CI verte sur GitHub, Render ne déploie qu'après la CI (« After CI Checks Pass ») ;
 - base Postgres vérifiée : une réservation survit à un redéploiement ; parcours complet testé en ligne avec les autres services, contrat `/reservations/valid` validé par Access ;
 - **mode secours Vehicles supprimé** (`vehicles_fallback.py`, variables `VEHICLES_FALLBACK_*`) : Vehicles est branché, une panne renvoie de nouveau 502 sans consommer de place ;

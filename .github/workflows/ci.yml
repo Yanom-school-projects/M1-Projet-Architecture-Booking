@@ -80,11 +80,31 @@ jobs:
       - name: Dépendances du front (pip-audit)
         run: pip-audit -r front/requirements.txt
 
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.21.2"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tout l'historique : un secret commité puis supprimé reste lisible
+          # dans les anciens commits.
+          fetch-depth: 0
+      - name: Installer gitleaks
+        run: |
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" | tar -xz gitleaks
+      # Échoue si une clé, un mot de passe ou une URL avec identifiants est
+      # trouvé dans un commit. --redact : la valeur n'apparaît pas dans les logs.
+      - name: Recherche de secrets dans tout l'historique
+        run: ./gitleaks git --redact --verbose .
+
   docker:
     name: Build des images Docker
     runs-on: ubuntu-latest
     # Inutile de construire les images si le code ne passe pas les tests.
-    needs: [lint, tests, security]
+    needs: [lint, tests, security, secrets]
     steps:
       - uses: actions/checkout@v4
       - name: Image de l'API

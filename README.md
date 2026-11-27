@@ -46,7 +46,7 @@ Dernière mise à jour : **27 novembre**.
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
 | Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus (trafic, durée, métier), 112 tests pytest (métier, API, Access, sécurité). |
-| CI/CD | 2 | GitHub Actions à chaque push : lint, tests, bandit, pip-audit, build et démarrage des images. Déploiement automatique Render. |
+| CI/CD | 2 | GitHub Actions à chaque push : lint, tests, bandit, pip-audit, gitleaks, build et démarrage des images. Déploiement automatique Render. |
 | Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
 Reste à faire avant le rendu : [todolist.md](todolist.md).
@@ -276,9 +276,10 @@ réglé sur *After CI Checks Pass*).
 | Lint | `ruff check .` (configuration dans `ruff.toml`, API et front) |
 | Tests | `pytest` sur l'API (base SQLite jetable, sans secret ni service externe) |
 | Sécurité | SAST `bandit` sur le code, SCA `pip-audit` sur les dépendances de l'API et du front |
+| Secrets | `gitleaks` sur **tout l'historique Git** : échoue si une clé, un mot de passe ou une URL avec identifiants a été commité, même supprimé depuis (valeurs masquées dans les logs) |
 | Docker | Build des images API et front, puis l'image de l'API doit démarrer et répondre sur `/health` |
 
-Le job Docker ne tourne que si les trois autres passent. Pour que Render ne déploie qu'un commit dont la CI est verte,
+Le job Docker ne tourne que si les quatre autres passent. Pour que Render ne déploie qu'un commit dont la CI est verte,
 régler *Settings → Build & Deploy → Auto-Deploy* sur **After CI Checks Pass** pour l'API et le front.
 
 Mêmes contrôles en local :
