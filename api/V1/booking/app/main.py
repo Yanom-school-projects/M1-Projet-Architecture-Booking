@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from fastapi import Depends, FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from app import __version__
 from app.adapters.inbound.http.correlation_middleware import CorrelationIdMiddleware
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
 from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
@@ -126,7 +127,7 @@ app = FastAPI(
     lifespan=lifespan,
     title="Booking Service",
     description=API_DESCRIPTION,
-    version="2.5.0",
+    version=__version__,
     openapi_tags=TAGS_METADATA,
 )
 

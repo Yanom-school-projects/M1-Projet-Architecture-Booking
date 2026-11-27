@@ -166,6 +166,7 @@ Fait
 - mise en ligne vérifiée : clé d'API dans Render et transmise à Access, CI verte sur GitHub, Render ne déploie qu'après la CI (« After CI Checks Pass ») ;
 - base Postgres vérifiée : une réservation survit à un redéploiement ; parcours complet testé en ligne avec les autres services, contrat `/reservations/valid` validé par Access ;
 - **mode secours Vehicles supprimé** (`vehicles_fallback.py`, variables `VEHICLES_FALLBACK_*`) : Vehicles est branché, une panne renvoie de nouveau 502 sans consommer de place ;
+- **version 2.6.0**, définie une seule fois dans `app/__init__.py` et marquée par le tag `v2.6.0` (la CI vérifie la concordance) ;
 - **histogramme `http_request_duration_seconds`** (méthode, route), demandé au jalon 13 : la durée s'arrête à l'envoi de la réponse, pour ne pas compter le suivi du paiement lancé en tâche de fond ; seuils jusqu'à 120 s pour les réveils Render ; ligne « Latence » (p50 / p95 / p99) dans Grafana.
 
 Problèmes

@@ -3,6 +3,7 @@
 
 import pytest
 
+from app import __version__
 from app.config import settings
 from tests.conftest import API_KEY
 
@@ -24,7 +25,7 @@ PROTECTED_ROUTES = [
 def test_health_public_avec_version(anonymous):
     response = anonymous.get(f"{PREFIX}/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "booking", "version": "2.5.0"}
+    assert response.json() == {"status": "ok", "service": "booking", "version": __version__}
 
 
 @pytest.mark.parametrize("method, url", PROTECTED_ROUTES)

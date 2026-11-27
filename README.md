@@ -14,7 +14,13 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 ## Version
 
-**2.5.0**, renvoyée par `GET /v2/booking/health`.
+**2.6.0**, renvoyée par `GET /v2/booking/health`. Définie à un seul endroit (`app/__init__.py`) et marquée
+par un tag Git `v2.6.0` ; la CI vérifie que le tag et le code concordent.
+
+| Version | Contenu |
+|---|---|
+| 2.6.0 | Durée des requêtes (`http_request_duration_seconds`) et latence dans Grafana, mode secours Vehicles retiré |
+| 2.5.0 | Sécurité : clé d'API, entrées validées, erreurs 500 sans détail ; tests pytest et CI GitHub Actions |
 
 Dernière mise à jour : **27 novembre**.
 
