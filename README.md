@@ -39,7 +39,7 @@ Dernière mise à jour : **27 novembre**.
 | API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres en ligne : les réservations survivent aux mises en veille et redéploiements. |
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
-| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus, 110 tests pytest (métier, API, Access, sécurité). |
+| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus (trafic, durée, métier), 112 tests pytest (métier, API, Access, sécurité). |
 | CI/CD | 2 | GitHub Actions à chaque push : lint, tests, bandit, pip-audit, build et démarrage des images. Déploiement automatique Render. |
 | Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
@@ -129,7 +129,7 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 Ou plus simplement avec le front : choisir le type, la date et l'heure (heure de Paris), puis « Réserver ».
 
 À savoir :
-- tant que Vehicles n'a pas d'URL, l'étape 3 renvoie **502**, sauf si le mode secours est activé (`VEHICLES_FALLBACK_ENABLED=true`, voir Configuration) ;
+- si Vehicles, Pricing ou Payment ne répond pas, l'étape 3 renvoie **502** et aucune place n'est consommée ;
 - seule la catégorie STANDARD a des places réservables chez Parking pour l'instant ;
 - sur le plan gratuit de Render, le premier appel après une période d'inactivité prend environ 30 s.
 
@@ -201,6 +201,7 @@ docker compose up -d --build
 
 Base SQLite et logs dans un volume Docker : ils survivent à un `docker compose down` / `up`.
 Démo de panne : `docker compose stop booking`, la cible passe à `up = 0` dans Grafana.
+Le tableau de bord a une ligne **Latence** : p50 / p95 / p99 par service et p95 par route de Booking.
 
 ## Observabilité
 
@@ -215,6 +216,7 @@ dans les événements RabbitMQ. C'est un identifiant opaque, sans donnée person
 | Métrique | Labels | Sens |
 |---|---|---|
 | `http_requests_total` | `method`, `route`, `status`, `outcome` | Trafic HTTP, `outcome` = `success` / `error` |
+| `http_request_duration_seconds` | `method`, `route` | Histogramme de la durée de traitement, jusqu'à l'envoi de la réponse (hors tâches de fond). Seuils de 10 ms à 120 s : une réservation attend des services Render parfois en veille |
 | `parking_operations_total` | `service="booking"`, `operation`, `result` | Réservations créées / refusées, paiements acceptés / refusés, annulations, vérifications Access valides / invalides, synchros de capacité |
 
 Les noms suivent la convention commune du projet. `monitoring/prometheus/prometheus.yml` supervise aussi les
@@ -236,8 +238,6 @@ Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 | `PARKING_SYNC_INTERVAL_SECONDS` | Synchronisation avec Parking (3600 s) |
 | `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (120 s, le temps qu'un service Render se réveille) |
 | `LOG_LEVEL`, `LOG_DIR`, `LOG_RETENTION_DAYS` | Niveau de log, dossier des fichiers de logs (vide = console seule, conseillé sur Render), rétention (14 jours) |
-| `VEHICLES_FALLBACK_ENABLED` | **Temporaire.** `true` : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule (empreinte de la plaque, préfixe `tmp-`) au lieu de renvoyer 502. `false` par défaut |
-| `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours. Sans elle, le mode secours reste coupé |
 
 Côté front : `BOOKING_API_URL` et `BOOKING_API_KEY` (valeur de `API_KEY`).
 

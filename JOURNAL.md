@@ -162,14 +162,18 @@ Fait
   - SAST `bandit` et SCA `pip-audit` (API et front) ;
   - build des deux images Docker, puis démarrage de l'API et appel de `/health` ;
   - le déploiement reste l'auto-deploy de Render, à régler sur « After CI Checks Pass » pour attendre la CI ;
-- bandit a relevé que le code de réservation était tiré avec `random` : il sert à consulter et annuler une réservation, il est maintenant tiré avec `secrets`.
+- bandit a relevé que le code de réservation était tiré avec `random` : il sert à consulter et annuler une réservation, il est maintenant tiré avec `secrets` ;
+- mise en ligne vérifiée : clé d'API dans Render et transmise à Access, CI verte sur GitHub, Render ne déploie qu'après la CI (« After CI Checks Pass ») ;
+- base Postgres vérifiée : une réservation survit à un redéploiement ; parcours complet testé en ligne avec les autres services, contrat `/reservations/valid` validé par Access ;
+- **mode secours Vehicles supprimé** (`vehicles_fallback.py`, variables `VEHICLES_FALLBACK_*`) : Vehicles est branché, une panne renvoie de nouveau 502 sans consommer de place ;
+- **histogramme `http_request_duration_seconds`** (méthode, route), demandé au jalon 13 : la durée s'arrête à l'envoi de la réponse, pour ne pas compter le suivi du paiement lancé en tâche de fond ; seuils jusqu'à 120 s pour les réveils Render ; ligne « Latence » (p50 / p95 / p99) dans Grafana.
 
 Problèmes
-- la clé doit être transmise à l'équipe Access, sinon leurs vérifications reçoivent 401 ;
-- tant que Render n'est pas réglé sur « After CI Checks Pass », un commit qui casse la CI est quand même déployé.
+- les variables `VEHICLES_FALLBACK_*` éventuellement restées dans Render sont ignorées, à supprimer pour la propreté.
 
 Suite
-- régler l'auto-deploy Render sur la CI, vérifier la première exécution du workflow sur GitHub.
+- confirmer avec Messages le format des événements et avec Parking le sens de `spot_available` ;
+- docs d'architecture et de test, dépôt SharePoint, préparation de la keynote.
 
 ---
 
