@@ -1,4 +1,4 @@
-# Architecture — service Booking (v2.6.0)
+# Architecture — service Booking (v2.7.0)
 
 Documentation technique du service **Booking**. Contexte global du projet :
 [`projet_fil_rouge_parking_cadrage_metier.md`](./projet_fil_rouge_parking_cadrage_metier.md).
@@ -8,7 +8,7 @@ Mise en route, URL et configuration : [README](../README.md).
 ## 1. Rôle du service
 
 Booking gère la **disponibilité future** du parking (un calendrier de places
-réservables par type de place et par heure) et le **cycle de vie d'une
+réservables par type de place et par quart d'heure) et le **cycle de vie d'une
 réservation** : recherche de créneau, tarification, paiement anticipé,
 confirmation, annulation (sans remboursement).
 
@@ -77,6 +77,7 @@ flowchart TB
 
 - **`domain/`** : dataclasses et règles pures (`validate_slot`, `hour_slots`). L'heure
   courante est passée en paramètre : les règles se testent sans horloge ni base.
+  Unité de temps : le **quart d'heure** (`SLOT_MINUTES = 15`, `slot_starts`, `slot_floor`).
 - **`ports/`** : interfaces (`ABC`) dont `application/` a besoin.
 - **`application/`** : cas d'usage `ReservationService`, `CapacityService`,
   `ParkingSyncService`. Ils n'utilisent que les ports.
@@ -108,7 +109,7 @@ api/V1/booking/
       enums.py                     # PlaceType (+ libellés), ReservationStatus
       value_objects.py             # PriceQuote, PaymentAttempt, PaymentStatus
       exceptions.py                # DomainError et sous-classes
-      rules.py                     # validate_slot, hour_slots
+      rules.py                     # validate_slot, slot_starts (quarts d'heure)
 
     ports/
       repositories.py, unit_of_work.py
@@ -133,17 +134,17 @@ api/V1/booking/
         schemas.py                 # DTO Pydantic (validation des entrées)
         routers/                   # health, availability, reservations, capacity, parking_sync
       outbound/
-        persistence/               # database, orm_models, repositories, unit_of_work, migrations
+        persistence/               # database, orm_models, repositories, unit_of_work, migrations (dont passage au quart d'heure)
         external_services/         # vehicles, pricing, payment, parking, http_client, wake_up
         messaging/event_publishers.py
         metrics/prometheus_metrics.py
 
-  tests/                           # 112 tests pytest (voir §10)
+  tests/                           # 123 tests pytest (voir §10)
   mocks/server.py                  # faux Vehicles / Pricing / Payment pour le local
   scripts/seed_capacity.py         # capacité de test sans Parking
   requirements.txt, requirements-dev.txt, pytest.ini, Dockerfile, .env.example
 
-front/app.py                       # interface Streamlit
+front/app.py, time_picker.py       # interface Streamlit, sélecteur d'heure à roulettes
 monitoring/                        # Prometheus + Grafana (docker compose)
 .github/workflows/ci.yml           # intégration continue
 ```
@@ -164,7 +165,7 @@ convertit dans les deux sens. Aucun cas d'usage ne manipule un objet ORM.
 | `vehicle_id` | `str` | Identifiant pseudonymisé renvoyé par Vehicles, **jamais la plaque**. |
 | `email` | `str` | Transmis à Messages pour la confirmation. |
 | `place_type` | `PlaceType` | `STANDARD`, `HANDICAPPED`, `ELECTRIC`, `XL`, `TWO_WHEELS` : codes communs à tous les services. |
-| `start_at` / `end_at` | `datetime` | UTC sans fuseau, heures pleines ; `end_at` exclu. |
+| `start_at` / `end_at` | `datetime` | UTC sans fuseau, sur un quart d'heure (:00, :15, :30, :45) ; `end_at` exclu. |
 | `status` | `ReservationStatus` | Voir cycle de vie. |
 | `price_amount`, `price_reference` | `Decimal`, `str` | Montant et `quote_id` renvoyés par Pricing. |
 | `payment_id` | `str` | Identifiant du paiement chez Payment. |
@@ -173,8 +174,17 @@ convertit dans les deux sens. Aucun cas d'usage ne manipule un objet ORM.
 
 ### `CapacitySlot`
 
-Un compteur par type de place et par heure pleine (`allocated`, `booked`,
-`free = allocated - booked`). **Pas d'affectation d'une place précise** : Booking
+Un compteur par type de place et par **quart d'heure** (`allocated`, `booked`,
+`free = allocated - booked`). Une réservation de 7 h 45 à 16 h 30 consomme une place
+sur chacun de ses 35 quarts d'heure ; deux réservations qui se touchent (7 h - 7 h 45
+et 7 h 45 - 9 h) n'ont aucun quart d'heure en commun et peuvent partager la dernière place.
+Le calendrier est lu et écrit par plages (`find_range`, `get_range`, `save_many`) :
+une réservation de 7 jours touche 672 quarts d'heure, la synchro Parking plus de
+3 500 par type, en quelques requêtes seulement.
+
+**Écart assumé avec le cadrage** (§2.6 : tranches d'une heure sur heures pleines) :
+réservation au quart d'heure, cohérente avec la facturation de Pricing, elle aussi
+au quart d'heure (« tout quart d'heure entamé est dû »). **Pas d'affectation d'une place précise** : Booking
 gère un stock réservable, Access attribue la place à l'entrée.
 
 ### Cycle de vie
@@ -201,7 +211,12 @@ stateDiagram-v2
 
 Pas d'Alembic : `Base.metadata.create_all` crée les tables, et
 `persistence/migrations.py` ajoute au démarrage les colonnes apparues après coup
-(`correlation_id`, `payment_idempotency_key`). En ligne, la base est un
+(`correlation_id`, `payment_idempotency_key`), puis `split_hourly_capacity` fait
+passer le calendrier à venir de l'heure au quart d'heure (v2.7.0) : chaque créneau
+d'une heure reçoit ses trois quarts d'heure suivants, avec la même allocation et le
+même nombre de places réservées (les réservations d'avant tombaient toutes sur des
+heures pleines). Elle ne tourne qu'une fois : rien n'est fait dès qu'un quart d'heure
+existe. En ligne, la base est un
 **Postgres** (`DATABASE_URL`) : le disque Render est effacé à chaque redémarrage.
 
 ---
@@ -278,7 +293,7 @@ sequenceDiagram
     participant DB as Base
 
     C->>S: POST /reservations
-    S->>S: validate_slot (heures pleines, 30 jours, 7 jours max)
+    S->>S: validate_slot (quarts d'heure, 30 jours, 7 jours max)
     S->>DB: capacité disponible ?
     par réveil en parallèle
         S->>V: plaque -> vehicle_id
@@ -300,7 +315,7 @@ sequenceDiagram
 ```
 
 - La disponibilité est vérifiée **avant** d'appeler Vehicles (réponse rapide si
-  complet), puis la réservation de capacité vérifie chaque heure à nouveau.
+  complet), puis la réservation de capacité vérifie chaque quart d'heure à nouveau.
 - La réservation est **commitée avant l'appel à Payment** : si Booking s'arrête
   pendant l'appel, la réservation et sa clé existent toujours.
 - Issue de `POST /payments` :
@@ -336,13 +351,13 @@ réservation non annulable : c'est une extension assumée.
 ### 7.5. Capacité depuis Parking
 
 Au démarrage puis toutes les heures, `ParkingSyncService` lit pour chaque type
-`spot_available` chez Parking et l'applique à chaque heure des 30 prochains jours
-(+ 7 jours de durée maximale). Une heure n'est **jamais** ramenée sous le nombre de
-places déjà réservées.
+`spot_available` chez Parking et l'applique à chaque quart d'heure des 30 prochains
+jours (+ 7 jours de durée maximale). Un quart d'heure n'est **jamais** ramené sous le
+nombre de places déjà réservées.
 
 ⚠️ **Point de friction** : Parking a confirmé que `spot_available` est le nombre de
 places **libres à l'instant**, pas un quota réservé à Booking. Booking s'en sert
-pourtant comme capacité de toutes les heures à venir :
+pourtant comme capacité de tous les quarts d'heure à venir :
 - si le parking est plein maintenant, plus aucune réservation n'est possible pour
   la semaine suivante ;
 - s'il est vide, Booking peut promettre toutes les places sur un créneau futur où
@@ -415,7 +430,7 @@ métier et latence p50 / p95 / p99.
 | Clé d'API unique | `API_KEY`, en-tête `X-API-Key`, sur toutes les routes sauf `/health` ; partagée avec le front et Access. `/metrics` accepte aussi `Authorization: Bearer` (format de Prometheus). |
 | Comparaison | Temps constant (`hmac.compare_digest`) ; 401 sans clé ou clé fausse. |
 | Échec fermé | Sans `API_KEY` configurée, tout est refusé (et signalé au démarrage). |
-| Entrées | Plaque 2 à 20 caractères `[A-Za-z0-9 -]`, e-mail validé, `vehicle_id` 128 caractères, code de réservation `^\d{6}$`. |
+| Entrées | Créneau au quart d'heure, plaque 2 à 20 caractères `[A-Za-z0-9 -]`, e-mail validé, `vehicle_id` 128 caractères, code de réservation `^\d{6}$`. |
 | Erreurs | 500 générique avec `correlation_id`, détail seulement dans les logs. |
 | En-têtes | `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. |
 | Secrets | Jamais dans Git (variables Render, `.env` ignoré) ; clés sortantes par service (`*_API_KEY`). |
@@ -425,7 +440,7 @@ Le choix d'**une seule clé** plutôt qu'une clé par appelant avec des droits
 différents est volontaire : plus simple à distribuer, suffisant pour ne plus
 exposer le service librement.
 
-### Tests (`api/V1/booking/tests/`, 112 tests)
+### Tests (`api/V1/booking/tests/`, 123 tests)
 
 Base SQLite jetable, clé de test, faux Vehicles / Pricing / Payment / bus
 (`tests/fakes.py`) : aucun appel réseau. Couvrent les règles de créneau, la
@@ -468,17 +483,23 @@ vider la ligne dans `.env`.
 ## 12. Mocks, front et extension
 
 **Mocks** (`mocks/server.py`, port 9000, hors de l'hexagone) : mêmes contrats que
-les vrais services. Vehicles renvoie un code, Pricing un tarif simple, Payment
+les vrais services. Vehicles renvoie le code seul (un entier), Pricing un tarif simple, Payment
 répond `PENDING` puis `ACCEPTED` après quelques secondes ;
 `POST /payment/payments/{id}/force-status` force `REFUSED` pour les tests.
 
 **Front** (`front/app.py`) : client Streamlit en heure de Paris (disponibilité,
-réservation, suivi du paiement, annulation par code). Il envoie la clé
+réservation, suivi du paiement, annulation par code). Le début et la fin se
+choisissent chacun par une date et un bloc **heures : minutes à roulettes**
+(`front/time_picker.py`, composant `st.components.v2`, sans dépendance) : on fait
+défiler les heures (00 à 23) et les minutes (00, 15, 30, 45), en boucle (après 23 vient
+00), à la molette, au doigt ou en maintenant le clic (avec élan) ; la valeur au centre est
+retenue ; le front vérifie les règles (fin après début, 30 jours, 7 jours) avant d'appeler Booking, qui les
+vérifie à nouveau. Il envoie la clé
 (`BOOKING_API_KEY`) côté serveur : elle n'arrive jamais dans le navigateur.
 
 | Je veux... | Je touche... |
 |---|---|
-| Changer une règle de créneau | `domain/rules.py` (+ `tests/test_rules.py`) |
+| Changer une règle de créneau ou l'unité de temps | `domain/rules.py` (`SLOT_MINUTES`) + `tests/test_rules.py` ; prévoir une migration du calendrier comme `split_hourly_capacity` |
 | Ajouter un champ à une réservation | `entities.py`, `orm_models.py`, `repositories.py`, `migrations.py`, `schemas.py` |
 | Ajouter un cas d'usage | une méthode dans `application/`, une route dans `routers/` |
 | Brancher un nouveau service externe | un port dans `ports/`, un adaptateur dans `outbound/external_services/`, le câblage dans `dependencies.py`, un faux dans `tests/fakes.py` |
@@ -497,5 +518,7 @@ réservation, suivi du paiement, annulation par code). Il envoie la clé
   transitions de statut sont protégées, la réservation de capacité simultanée
   sur la dernière place reste théoriquement possible sous forte charge.
 - **Pas d'Alembic** : migrations minimales au démarrage.
+- **Volume du calendrier** : 4 fois plus de lignes depuis le quart d'heure (environ 3 550 par type de place) ;
+  les créneaux passés ne sont jamais purgés.
 - **Annulation sans remboursement**, extension par rapport au cadrage (non annulable).
 - **Pas de limite de débit** sur `POST /reservations`.

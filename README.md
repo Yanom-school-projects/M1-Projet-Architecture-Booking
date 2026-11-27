@@ -8,17 +8,18 @@ Booking gère la **disponibilité future** du parking et les **réservations** s
 Il répond à la question : « pour ce type de place, entre telle heure et telle heure, reste-t-il une place ? »,
 empêche d'accepter plus de réservations que la capacité, puis orchestre le prix (Pricing) et le paiement (Payment).
 
-Booking gère un **nombre de places par type et par heure**, jamais une place précise : l'attribution physique
+Booking gère un **nombre de places par type et par quart d'heure**, jamais une place précise : l'attribution physique
 se fait à l'entrée, côté Access et Parking. Il ne stocke jamais la plaque d'immatriculation, seulement
 l'identifiant pseudonymisé fourni par Vehicles.
 
 ## Version
 
-**2.6.0**, renvoyée par `GET /v2/booking/health`. Définie à un seul endroit (`app/__init__.py`) et marquée
-par un tag Git `v2.6.0` ; la CI vérifie que le tag et le code concordent.
+**2.7.0**, renvoyée par `GET /v2/booking/health`. Définie à un seul endroit (`app/__init__.py`) et marquée
+par un tag Git `v2.7.0` ; la CI vérifie que le tag et le code concordent.
 
 | Version | Contenu |
 |---|---|
+| 2.7.0 | **Réservation au quart d'heure** (ex. 7 h 45 - 16 h 30) : créneaux et capacité comptés par quart d'heure, migration automatique du calendrier horaire existant. Front : début et fin choisis par une date et un bloc **heures : minutes à roulettes** (00 à 23, puis 00, 15, 30 ou 45), qui tournent en boucle et se font glisser à la souris, au lieu d'une durée, règles vérifiées avant l'appel, message clair si Booking ne répond pas. Mock Vehicles aligné sur le vrai contrat |
 | 2.6.0 | Durée des requêtes (`http_request_duration_seconds`) et latence dans Grafana, mode secours Vehicles retiré |
 | 2.5.0 | Sécurité : clé d'API, entrées validées, erreurs 500 sans détail ; tests pytest et CI GitHub Actions |
 
@@ -41,11 +42,11 @@ Dernière mise à jour : **27 novembre**.
 
 | Aspect | État | Constat |
 |---|---|---|
-| Métier | 3 | Capacité par type et par heure, créneaux, cycle de vie, idempotence du paiement. Écart assumé : annulation sans remboursement. |
+| Métier | 3 | Capacité par type et par quart d'heure, créneaux, cycle de vie, idempotence du paiement. Écarts assumés : annulation sans remboursement, réservation au quart d'heure (cadrage : à l'heure). |
 | API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres en ligne : les réservations survivent aux mises en veille et redéploiements. |
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
-| Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
-| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus (trafic, durée, métier), 112 tests pytest (métier, API, Access, sécurité). |
+| Interface | 2 | Front Streamlit (heure de Paris, début et fin choisis sur des roulettes heures : minutes) + tableau de bord Grafana. |
+| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus (trafic, durée, métier), 123 tests pytest (métier, API, Access, sécurité). |
 | CI/CD | 2 | GitHub Actions à chaque push : lint, tests, bandit, pip-audit, gitleaks, build et démarrage des images. Déploiement automatique Render. |
 | Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
@@ -54,7 +55,7 @@ Reste à faire avant le rendu : [todolist.md](todolist.md).
 ## Fonctionnalités
 
 - [x] Je peux consulter les disponibilités d'un type de place sur un créneau.
-- [x] Je peux réserver une place sur un créneau (heures pleines, 30 jours max à l'avance, 7 jours max de durée).
+- [x] Je peux réserver une place sur un créneau (au quart d'heure, 30 jours max à l'avance, 7 jours max de durée).
 - [x] Je peux empêcher de réserver plus de places que la capacité disponible.
 - [x] Je récupère auprès de Parking le nombre de places proposées à la réservation.
 - [x] Je peux demander le prix à Pricing.
@@ -117,8 +118,8 @@ Cycle de vie : `pending_payment` → `confirmed` (paiement accepté) ou `failed`
 ### En ligne
 
 1. Ouvrir le Swagger (`/docs`), cliquer sur **Authorize** et coller la clé d'API.
-2. `GET /v2/booking/availability` avec `place_type=STANDARD` et un créneau futur sur des heures pleines, par exemple
-   `start_at=2026-11-02T14:00:00Z` et `end_at=2026-11-02T16:00:00Z`.
+2. `GET /v2/booking/availability` avec `place_type=STANDARD` et un créneau futur au quart d'heure, par exemple
+   `start_at=2026-11-02T14:00:00Z` et `end_at=2026-11-02T16:00:00Z` (ou `07:45` - `16:30`).
 3. `POST /v2/booking/reservations` :
    ```json
    {
@@ -180,8 +181,9 @@ Les tests utilisent une base SQLite jetable et une clé d'API de test : ils n'ap
 
 | Fichier | Ce qui est vérifié |
 |---|---|
-| `test_rules.py` | Règles de créneau : heures pleines, créneau passé, horizon de 30 jours, durée max 7 jours, conversion UTC. |
-| `test_capacity.py` | Capacité par type et par heure : heure la plus chargée, pas de réservation partielle, libération, allocation sous le réservé refusée. |
+| `test_rules.py` | Règles de créneau : quarts d'heure, créneau passé, horizon de 30 jours, durée max 7 jours, conversion UTC. |
+| `test_capacity.py` | Capacité par type et par quart d'heure : quart d'heure le plus chargé, pas de réservation partielle, libération, allocation sous le réservé refusée, créneaux qui se touchent (7 h - 7 h 45 puis 7 h 45 - 9 h sur une seule place). |
+| `test_quarter_migration.py` | Migration du calendrier horaire vers le quart d'heure (une seule fois, créneaux passés ignorés), synchro Parking au quart d'heure. |
 | `test_reservation_flow.py` | Parcours métier : création, paiement accepté / refusé / en attente, pannes de Vehicles, Pricing, Payment et du bus, clé d'idempotence, annulation. |
 | `test_access.py` | Les 10 cas de `GET /reservations/valid` (début inclus, fin exclue, fuseau, annulée, échouée, paiement accepté entre-temps...). |
 | `test_api.py` | Routes HTTP : codes 201/404/409/422/502, validation des entrées, correlation ID, métriques Prometheus. |
@@ -310,7 +312,7 @@ dans Git) et partagée avec les appelants de Booking : le front, Access et Prome
 - Générer une clé : `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
 **Validation des entrées.** Schémas Pydantic : types de place limités à la nomenclature, dates contrôlées
-(heures pleines, horizon, durée), e-mail validé, plaque limitée à 20 caractères (lettres, chiffres, espaces,
+(quarts d'heure, horizon, durée), e-mail validé, plaque limitée à 20 caractères (lettres, chiffres, espaces,
 tirets), code de réservation à 6 chiffres, `vehicle_id` limité à 128 caractères, capacité positive.
 
 **Erreurs.** Les erreurs métier renvoient un message court (`detail`). Une erreur imprévue renvoie
@@ -332,4 +334,4 @@ Architecture hexagonale : `domain/` (règles métier pures), `ports/` (interface
 `adapters/` (FastAPI, SQLAlchemy, httpx, RabbitMQ). Détails : [docs/booking_architecture.md](docs/booking_architecture.md).
 
 Le problème technique propre au service est la **gestion d'une capacité dans le temps** : une réservation
-consomme une place sur chaque heure de son créneau, et une seule heure saturée bloque tout le créneau.
+consomme une place sur chaque quart d'heure de son créneau, et un seul quart d'heure saturé bloque tout le créneau.

@@ -181,6 +181,39 @@ Suite
 
 ---
 
+## 27 novembre (suite) — version 2.7.0, réservation au quart d'heure
+
+Fait
+- **réservation au quart d'heure** (ex. 7 h 45 - 16 h 30), à la demande des utilisateurs du front :
+  - créneaux sur :00, :15, :30 ou :45, et **capacité comptée par quart d'heure** : une réservation de 7 h 45 à 16 h 30 occupe 35 quarts d'heure ; 7 h - 7 h 45 et 7 h 45 - 9 h peuvent partager la dernière place ;
+  - écart assumé avec le cadrage (tranches d'une heure), cohérent avec la facturation de Pricing au quart d'heure ; Access et Pricing n'ont rien à changer (Access compare des instants, Pricing reçoit une durée en minutes) ;
+  - une capacité à l'heure avec des horaires au quart d'heure a été envisagée (plus simple, sans migration) puis écartée : une place aurait été bloquée pour toute l'heure entamée ;
+  - calendrier 4 fois plus grand : lectures et écritures groupées par plage (une réservation de 7 jours = 672 quarts d'heure, la synchro Parking plus de 3 500 par type) ;
+  - **migration au démarrage** (`split_hourly_capacity`) : chaque créneau d'une heure à venir reçoit ses trois quarts d'heure, avec la même allocation et les mêmes places réservées ; une seule fois, rien n'est fait dès qu'un quart d'heure existe ;
+  - mock Pricing facturé au quart d'heure, script de capacité au quart d'heure ;
+- **saisie du créneau dans le front** : début et fin choisis chacun par une date (calendrier) et un bloc **heures : minutes à roulettes**, au lieu d'une heure tapée et d'une durée en heures ;
+  - roulettes à faire défiler comme sur un téléphone (`front/time_picker.py`, composant `st.components.v2`, sans dépendance) : heures 00 à 23, minutes 00, 15, 30 ou 45, valeur retenue au centre ; **en boucle** (après 23 vient 00 : la liste est répétée et la roulette revient discrètement sur la copie du milieu quand elle s'arrête) ; molette, doigt, **clic maintenu et tiré** avec élan puis calage, clic sur une valeur ou flèches du clavier ; couleurs du thème Streamlit (clair ou sombre) ;
+  - essais écartés en route : deux listes déroulantes séparées, puis une horloge à aiguilles, jugée moins pratique à l'usage ;
+  - testée dans un vrai navigateur (Edge sans interface, piloté par le protocole DevTools) : 19:45 et 22:30 choisis à la molette et au clic, boucle dans les deux sens, glisser lent précis et glisser rapide avec élan, valeurs bien reçues par Python à l'envoi du formulaire et conservées après rechargement ;
+  - par défaut : du prochain quart d'heure à une heure plus tard ;
+  - dates limitées dans le calendrier (30 jours pour le début, + 7 jours pour la fin) ;
+  - règles vérifiées avant l'appel (fin après début, créneau passé, 30 jours, 7 jours max) avec un message clair, puis rappel du créneau choisi (« du 28/11/2026 à 07:45 au 28/11/2026 à 16:30 (8 h 45 min) ») ;
+  - Booking reste juge : il vérifie de nouveau les mêmes règles ;
+- le front affiche « Booking ne répond pas » au lieu d'une trace d'erreur Python si l'API est injoignable (vérification, réservation, annulation) ;
+- **mock Vehicles corrigé** : il renvoyait encore l'objet véhicule complet alors que le vrai Vehicles renvoie le `code` seul ; en local, `vehicle_id` contenait tout l'objet converti en texte. Le service en ligne n'était pas touché ;
+- 123 tests pytest (dont migration et synchro au quart d'heure) ; vérifié avec l'outil de test de Streamlit (`AppTest`) contre l'API et les mocks lancés en local : 7 h 45 - 16 h 30 disponible, réservé, confirmé, heure de Paris convertie en UTC, prix de 35 quarts d'heure ;
+- version **2.7.0**.
+
+Problèmes
+- en local (Docker), la synchro Parking reçoit 401 : `PARKING_API_KEY` manque dans `api/V1/booking/.env` ;
+- à vérifier au premier démarrage en ligne : la ligne « Capacité passée au quart d'heure » dans les logs Render.
+
+Suite
+- prévenir Access et Pricing que les réservations peuvent commencer et finir au quart d'heure ;
+- dépôt SharePoint, tableau de suivi, préparation de la keynote.
+
+---
+
 ## Point d'étape au 28 octobre
 
 ### État par aspect de maturité

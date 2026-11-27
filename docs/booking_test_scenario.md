@@ -1,11 +1,11 @@
-# Scénario de test manuel — service Booking (v2.6.0)
+# Scénario de test manuel — service Booking (v2.7.0)
 
 But : dérouler à la main le parcours complet (disponibilité, réservation,
 paiement, confirmation, vérification Access, annulation), les cas d'erreur, la
 sécurité et l'observabilité. Chaque étape indique le résultat attendu : noter tout
 ce qui diverge.
 
-Ce scénario complète les **112 tests automatisés** (`python -m pytest`, voir le
+Ce scénario complète les **123 tests automatisés** (`python -m pytest`, voir le
 README) : eux vérifient la logique avec de faux services ; ce scénario vérifie
 le service réellement lancé, en local ou en ligne.
 
@@ -51,14 +51,14 @@ API https://booking-api-vhy5.onrender.com (Swagger : `/docs`), front
 https://booking-front-ltvv.onrender.com. La capacité vient de Parking (synchro
 toutes les heures). Premier appel après une période d'inactivité : environ 30 s.
 
-✅ `GET /v2/booking/health` renvoie `{"status": "ok", "service": "booking", "version": "2.6.0"}`, sans clé.
+✅ `GET /v2/booking/health` renvoie `{"status": "ok", "service": "booking", "version": "2.7.0"}`, sans clé.
 
 ---
 
 ## A. Parcours nominal via Swagger
 
 1. **`GET /availability`** avec `place_type=STANDARD`, un créneau futur sur des
-   heures pleines (ex. `start_at=2026-12-02T14:00:00Z`, `end_at=2026-12-02T16:00:00Z`).
+   quarts d'heure (ex. `start_at=2026-12-02T14:00:00Z`, `end_at=2026-12-02T16:00:00Z`).
    ✅ `available: true`, `min_free_capacity` ≥ 1.
 
 2. **`POST /reservations`** :
@@ -87,11 +87,20 @@ toutes les heures). Premier appel après une période d'inactivité : environ 30
 
 ## B. Parcours nominal via le front
 
-1. Choisir le type, la date et l'heure (heure de Paris), une plaque et un e-mail.
-2. **Vérifier la disponibilité** : ✅ message « Disponible ».
-3. **Réserver** : ✅ code à 6 chiffres affiché, puis suivi du paiement jusqu'à « confirmée ».
-4. Section **Annuler une réservation** avec ce code : ✅ réservation annulée.
-5. Code d'annulation mal formé (ex. `12ab`) : ✅ refusé par le front avant tout appel.
+1. Choisir le type, une plaque, un e-mail, puis pour le début et pour la fin une
+   **date** et une heure sur les **roulettes** « heures : minutes » (heure de Paris) :
+   faire défiler les heures (00 à 23) puis les minutes (00, 15, 30, 45) à la molette,
+   au doigt, en maintenant le clic et en tirant vers le haut ou le bas (avec élan), au
+   clic sur une valeur ou aux flèches du clavier ; la valeur dans la bande du milieu est
+   retenue. ✅ Les roulettes tournent en boucle : après 23 vient 00, après 45 vient 00.
+   Par défaut : du prochain quart d'heure à une heure plus tard.
+2. Choisir 07 h 45 - 16 h 30 et **Vérifier la disponibilité** : ✅ rappel du créneau
+   (« du 28/11/2026 à 07:45 au 28/11/2026 à 16:30 (8 h 45 min) ») et message « Disponible ».
+3. Fin avant le début, ou plus de 7 jours : ✅ message clair, aucun appel à Booking.
+4. Booking arrêté : ✅ « Booking ne répond pas… », pas de trace d'erreur Python.
+5. **Réserver** : ✅ code à 6 chiffres affiché, puis suivi du paiement jusqu'à « confirmée ».
+6. Section **Annuler une réservation** avec ce code : ✅ réservation annulée.
+7. Code d'annulation mal formé (ex. `12ab`) : ✅ refusé par le front avant tout appel.
 
 📝 Noter l'ergonomie : clarté des messages, temps d'attente, formulaire.
 
@@ -134,7 +143,7 @@ Réservation encore `pending_payment` dont Payment a accepté le paiement : ✅
 
 | Cas | Comment | Attendu |
 |---|---|---|
-| Créneau non aligné | `start_at` à `15:30` | 422 |
+| Créneau hors quart d'heure | `start_at` à `15:20` | 422 |
 | Créneau passé | `start_at` hier | 422 |
 | Au-delà de 30 jours | `start_at` dans 31 jours | 422 |
 | Durée > 7 jours | `end_at` = `start_at` + 8 jours | 422 |
@@ -197,7 +206,16 @@ curl.exe -i -H "X-API-Key: <clé>" https://booking-api-vhy5.onrender.com/v2/book
 
 ---
 
-## I. Concurrence (optionnel)
+## I. Quart d'heure
+
+1. Allouer 1 place (`PUT /capacity-slots`) sur chaque quart d'heure de 7 h à 9 h.
+2. Réserver 7 h - 7 h 45, puis 7 h 45 - 9 h : ✅ les deux réussissent (aucun quart d'heure en commun).
+3. Réserver 7 h 30 - 8 h : ✅ 409, la place est prise sur ces quarts d'heure.
+4. `GET /availability` 7 h 45 - 16 h 30 : ✅ accepté ; `08:50` comme début : ✅ 422.
+
+---
+
+## J. Concurrence (optionnel)
 
 1. Allouer 1 seule place sur un créneau.
 2. Envoyer deux `POST /reservations` presque simultanés sur ce créneau.
