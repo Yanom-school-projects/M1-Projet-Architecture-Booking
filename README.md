@@ -40,7 +40,7 @@ Dernière mise à jour : **27 novembre**.
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
 | Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus, 110 tests pytest (métier, API, Access, sécurité). |
-| CI/CD | 1 | Redéploiement automatique Render à chaque push sur `main`, sans tests ni contrôles. |
+| CI/CD | 2 | GitHub Actions à chaque push : lint, tests, bandit, pip-audit, build et démarrage des images. Déploiement automatique Render. |
 | Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
 Reste à faire avant le rendu : [todolist.md](todolist.md).
@@ -253,7 +253,31 @@ Côté front : `BOOKING_API_URL` et `BOOKING_API_KEY` (valeur de `API_KEY`).
 Variables à définir dans Render (onglet *Environment*) : celles de la section Configuration pour l'API,
 `BOOKING_API_URL` et `BOOKING_API_KEY` pour le front.
 
-Chaque push sur `main` redéploie les deux services.
+Chaque push sur `main` redéploie les deux services (auto-deploy Render).
+
+## Intégration continue (GitHub Actions)
+
+`.github/workflows/ci.yml`, à chaque push et pull request :
+
+| Job | Contrôle |
+|---|---|
+| Lint | `ruff check .` (configuration dans `ruff.toml`, API et front) |
+| Tests | `pytest` sur l'API (base SQLite jetable, sans secret ni service externe) |
+| Sécurité | SAST `bandit` sur le code, SCA `pip-audit` sur les dépendances de l'API et du front |
+| Docker | Build des images API et front, puis l'image de l'API doit démarrer et répondre sur `/health` |
+
+Le job Docker ne tourne que si les trois autres passent. Pour que Render ne déploie qu'un commit dont la CI est verte,
+régler *Settings → Build & Deploy → Auto-Deploy* sur **After CI Checks Pass** pour l'API et le front.
+
+Mêmes contrôles en local :
+```powershell
+cd api/V1/booking
+.\.venv\Scripts\pip install -r requirements-dev.txt
+.\.venv\Scripts\python -m ruff check ../../..
+.\.venv\Scripts\python -m pytest
+.\.venv\Scripts\python -m bandit -r app
+.\.venv\Scripts\python -m pip_audit -r requirements.txt
+```
 
 ## Sécurité
 

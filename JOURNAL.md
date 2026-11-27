@@ -157,14 +157,19 @@ Fait
   - règles de créneau, capacité par heure, parcours de réservation (paiement accepté, refusé, en attente, issue inconnue renvoyée avec la même clé, pannes de chaque service) ;
   - les 10 cas Access du 28 octobre repris sur `GET /reservations/valid` ;
   - sécurité (401 sur chaque route, `/health` public, Bearer pour `/metrics`, 500 sans détail), correlation ID et métriques Prometheus.
+- **intégration continue** (`.github/workflows/ci.yml`) à chaque push et pull request :
+  - lint `ruff` (règles communes à l'API et au front dans `ruff.toml`), tests `pytest` ;
+  - SAST `bandit` et SCA `pip-audit` (API et front) ;
+  - build des deux images Docker, puis démarrage de l'API et appel de `/health` ;
+  - le déploiement reste l'auto-deploy de Render, à régler sur « After CI Checks Pass » pour attendre la CI ;
+- bandit a relevé que le code de réservation était tiré avec `random` : il sert à consulter et annuler une réservation, il est maintenant tiré avec `secrets`.
 
 Problèmes
 - la clé doit être transmise à l'équipe Access, sinon leurs vérifications reçoivent 401 ;
-- la clé doit être ajoutée dans Render (API et front) avant le prochain déploiement ;
-- les tests ne sont lancés qu'à la main : rien n'empêche encore de déployer du code qui les casse.
+- tant que Render n'est pas réglé sur « After CI Checks Pass », un commit qui casse la CI est quand même déployé.
 
 Suite
-- pipeline GitHub Actions (lint, tests, analyse de sécurité) avec déploiement conditionné aux tests.
+- régler l'auto-deploy Render sur la CI, vérifier la première exécution du workflow sur GitHub.
 
 ---
 
