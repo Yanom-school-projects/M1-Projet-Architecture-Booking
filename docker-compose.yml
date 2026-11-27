@@ -5,7 +5,12 @@
 #   Booking     http://localhost:8000/docs   (métriques : /v2/booking/metrics)
 #   Front       http://localhost:8501
 #   Prometheus  http://localhost:9090
-#   Grafana     http://localhost:3000   (admin / admin)
+#   Grafana     http://localhost:3000   (admin / GRAFANA_ADMIN_PASSWORD)
+#
+# Secrets : copier .env.example en .env à la racine (jamais commité) et le
+# remplir. Compose y lit les ${...} ci-dessous et refuse de démarrer s'il
+# en manque un. Les autres variables de Booking restent dans
+# api/V1/booking/.env.
 #
 # Les autres microservices (Vehicles, Pricing, Payment, Parking) tournent sur
 # Render : Booking les appelle via les URLs de api/V1/booking/.env, et
@@ -22,6 +27,9 @@ services:
       # Base et logs dans un volume : survivent à un docker compose down/up.
       DATABASE_URL: sqlite:////data/booking.db
       LOG_DIR: /data/logs
+      # Même clé pour Booking, le front et Prometheus : définie une seule
+      # fois, dans le .env racine.
+      API_KEY: ${API_KEY:?à définir dans .env}
     volumes:
       - booking-data:/data
     ports:
@@ -34,6 +42,7 @@ services:
     environment:
       # Nom du service compose = nom d'hôte sur le réseau interne.
       BOOKING_API_URL: http://booking:8000
+      BOOKING_API_KEY: ${API_KEY:?à définir dans .env}
     ports:
       - "8501:8501"
     depends_on:
@@ -59,7 +68,8 @@ services:
     container_name: grafana
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Plus de mot de passe par défaut en clair dans le dépôt.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?à définir dans .env}
       # Consultation sans se connecter (lecture seule), pratique en démo.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer

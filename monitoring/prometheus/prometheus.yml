@@ -25,8 +25,13 @@ scrape_configs:
   # --- Booking local (docker compose) ---------------------------------------
   # Dans le réseau compose, un conteneur se joint par son NOM DE SERVICE.
   # Cible idéale pour la démo de panne : docker compose stop booking.
+  # /metrics de Booking exige sa clé d'API, envoyée en « Authorization:
+  # Bearer » depuis un fichier monté au lancement (secrets/ ignoré par Git).
   - job_name: booking-local
     metrics_path: /v2/booking/metrics   # défaut = /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/booking_api_key
     static_configs:
       - targets: ["booking:8000"]
 
@@ -41,6 +46,9 @@ scrape_configs:
     metrics_path: /v2/booking/metrics
     scrape_interval: 30s
     scrape_timeout: 25s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/booking_api_key
     static_configs:
       - targets: ["booking-api-vhy5.onrender.com:443"]
 

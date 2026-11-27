@@ -1,3 +1,3 @@
-FROM docker.io/prom/prometheus:latest
+FROM docker.io/prom/prometheus:v3.5.0
 
 COPY prometheus.yml /etc/prometheus/prometheus.yml
