@@ -39,7 +39,7 @@ Dernière mise à jour : **27 novembre**.
 | API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres possible via `DATABASE_URL`. |
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
-| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus. Pas de tests automatisés. |
+| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus, 110 tests pytest (métier, API, Access, sécurité). |
 | CI/CD | 1 | Redéploiement automatique Render à chaque push sur `main`, sans tests ni contrôles. |
 | Sécurité | 2 | Clé d'API sur toutes les routes métier et `/metrics`, entrées validées, erreurs sans détail interne, secrets hors de Git, conteneurs non-root. |
 
@@ -160,6 +160,26 @@ $env:BOOKING_API_KEY = "<même valeur que API_KEY>"
 
 Sans Parking, remplir la capacité à la main (route admin) :
 `$env:API_KEY = "..."; python scripts/seed_capacity.py --days 3`.
+
+### Tests automatisés
+
+```powershell
+cd api/V1/booking
+.\.venv\Scripts\pip install -r requirements-dev.txt
+.\.venv\Scripts\python -m pytest
+```
+
+Les tests utilisent une base SQLite jetable et une clé d'API de test : ils n'appellent aucun service réel
+(Vehicles, Pricing, Payment et le bus sont remplacés par de faux adaptateurs, voir `tests/fakes.py`).
+
+| Fichier | Ce qui est vérifié |
+|---|---|
+| `test_rules.py` | Règles de créneau : heures pleines, créneau passé, horizon de 30 jours, durée max 7 jours, conversion UTC. |
+| `test_capacity.py` | Capacité par type et par heure : heure la plus chargée, pas de réservation partielle, libération, allocation sous le réservé refusée. |
+| `test_reservation_flow.py` | Parcours métier : création, paiement accepté / refusé / en attente, pannes de Vehicles, Pricing, Payment et du bus, clé d'idempotence, annulation. |
+| `test_access.py` | Les 10 cas de `GET /reservations/valid` (début inclus, fin exclue, fuseau, annulée, échouée, paiement accepté entre-temps...). |
+| `test_api.py` | Routes HTTP : codes 201/404/409/422/502, validation des entrées, correlation ID, métriques Prometheus. |
+| `test_security.py` | 401 sans clé ou avec une mauvaise clé sur chaque route, `/health` public, `/metrics` en Bearer, 500 sans détail, en-têtes HTTP. |
 
 ### Avec Docker Compose (API + front + Prometheus + Grafana)
 

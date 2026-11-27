@@ -152,14 +152,19 @@ Fait
   - plus de secret par défaut : mode secours Vehicles coupé sans `VEHICLES_FALLBACK_SECRET`, mot de passe Grafana et clé du front lus dans un `.env` ;
   - en-têtes de sécurité HTTP, conteneurs API et front non-root, image Prometheus en version fixe ;
   - vérifié avec un script TestClient : 401 sans clé ou clé fausse sur chaque route, 200 avec la clé, `/metrics` en X-API-Key et en Bearer, plaque invalide, 500 sans détail.
+- **tests automatisés pytest** (110 tests, `api/V1/booking/tests/`, lancés par `python -m pytest`) :
+  - base SQLite jetable et faux adaptateurs Vehicles / Pricing / Payment / bus : l'architecture hexagonale permet de tester le métier réel sans réseau ;
+  - règles de créneau, capacité par heure, parcours de réservation (paiement accepté, refusé, en attente, issue inconnue renvoyée avec la même clé, pannes de chaque service) ;
+  - les 10 cas Access du 28 octobre repris sur `GET /reservations/valid` ;
+  - sécurité (401 sur chaque route, `/health` public, Bearer pour `/metrics`, 500 sans détail), correlation ID et métriques Prometheus.
 
 Problèmes
 - la clé doit être transmise à l'équipe Access, sinon leurs vérifications reçoivent 401 ;
 - la clé doit être ajoutée dans Render (API et front) avant le prochain déploiement ;
-- toujours aucun test automatisé dans le dépôt.
+- les tests ne sont lancés qu'à la main : rien n'empêche encore de déployer du code qui les casse.
 
 Suite
-- tests pytest (dont ceux de la sécurité), pipeline GitHub Actions avec déploiement conditionné aux tests.
+- pipeline GitHub Actions (lint, tests, analyse de sécurité) avec déploiement conditionné aux tests.
 
 ---
 
