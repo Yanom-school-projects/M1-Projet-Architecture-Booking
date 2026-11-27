@@ -73,7 +73,7 @@ jobs:
       - run: pip install bandit pip-audit
       # SAST : failles courantes dans le code (aléatoire non sûr, injection...).
       - name: Analyse du code (bandit)
-        run: bandit -r api/V1/booking/app front/app.py
+        run: bandit -r api/V1/booking/app front/app.py front/time_picker.py
       # SCA : dépendances avec une vulnérabilité connue.
       - name: Dépendances de l'API (pip-audit)
         run: pip-audit -r api/V1/booking/requirements.txt

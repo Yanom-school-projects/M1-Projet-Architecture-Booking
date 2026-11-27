@@ -1,10 +1,12 @@
 import os
 import time
 from datetime import datetime, timedelta
+from datetime import time as dtime
 from zoneinfo import ZoneInfo
 
 import httpx
 import streamlit as st
+from time_picker import time_wheel
 
 # Sans le "/" final : sinon les appels partent vers "//reservations" (404).
 BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000").strip().rstrip("/")
@@ -35,28 +37,98 @@ PLACE_TYPES = {
     "TWO_WHEELS": "Deux-roues",
 }
 
+# Mêmes règles que Booking, vérifiées ici pour afficher un message clair avant
+# tout appel : créneaux au quart d'heure, 30 jours à l'avance, 7 jours au plus.
+HORIZON_DAYS = 30
+MAX_DURATION = timedelta(days=7)
+SLOT_MINUTES = 15
+DATE_FORMAT = "DD/MM/YYYY"
+
+
+def pick_moment(column, label: str, default: datetime, max_day) -> datetime:
+    """Une date, puis l'heure sur les roulettes heures : minutes (voir time_picker.py)."""
+    with column:
+        day = st.date_input(
+            f"{label} : date", value=default.date(), min_value=today, max_value=max_day, format=DATE_FORMAT
+        )
+        at = time_wheel(f"{label} : heure", default.time(), key=f"heure-{label}")
+    return paris_datetime(day, at)
+
+
+def slot_floor(value: datetime) -> datetime:
+    """Début du quart d'heure qui contient `value` (9 h 25 -> 9 h 15)."""
+    return value.replace(minute=value.minute - value.minute % SLOT_MINUTES, second=0, microsecond=0)
+
+
+def paris_datetime(day, at: dtime) -> datetime:
+    return datetime.combine(day, at, tzinfo=PARIS)
+
+
+def slot_error(start: datetime, end: datetime) -> str | None:
+    """Message à afficher si le créneau ne respecte pas les règles, sinon None."""
+    current_slot = slot_floor(datetime.now(PARIS))
+    if end <= start:
+        return "La fin doit être après le début."
+    if start < current_slot:
+        return "Le début du créneau est déjà passé."
+    if start > current_slot + timedelta(days=HORIZON_DAYS):
+        return f"On ne peut pas réserver plus de {HORIZON_DAYS} jours à l'avance."
+    if end - start > MAX_DURATION:
+        return "Une réservation dure 7 jours au plus."
+    return None
+
+
+def describe_slot(start: datetime, end: datetime) -> str:
+    minutes = int((end - start).total_seconds() // 60)
+    days, rest = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(rest, 60)
+    parts = (f"{days} j" if days else "", f"{hours} h" if hours else "", f"{minutes} min" if minutes else "")
+    duration = " ".join(part for part in parts if part)
+    return f"du {start:%d/%m/%Y à %H:%M} au {end:%d/%m/%Y à %H:%M} ({duration})"
+
+
+# Par défaut : du prochain quart d'heure à une heure plus tard.
+default_start = slot_floor(now_paris) + timedelta(minutes=SLOT_MINUTES)
+default_end = default_start + timedelta(hours=1)
+today = now_paris.date()
+
 with st.form("reservation_form"):
     plate = st.text_input("Plaque d'immatriculation", value="AB-123-CD")
     email = st.text_input("Email (pour la confirmation)", value="")
     place_type = st.selectbox("Type de place", list(PLACE_TYPES), format_func=PLACE_TYPES.get)
-    date = st.date_input("Date", value=now_paris.date())
-    start_hour = st.number_input("Heure de début (heure de Paris)", min_value=0, max_value=23, value=now_paris.hour)
-    duration_hours = st.number_input("Durée (heures)", min_value=1, max_value=24 * 7, value=1)
+
+    start_col, end_col = st.columns(2)
+    start_at = pick_moment(start_col, "Début", default_start, today + timedelta(days=HORIZON_DAYS))
+    end_at = pick_moment(end_col, "Fin", default_end, today + timedelta(days=HORIZON_DAYS) + MAX_DURATION)
+
     check_col, submit_col = st.columns(2)
     check = check_col.form_submit_button("Vérifier la disponibilité")
     submit = submit_col.form_submit_button("Réserver")
 
-start_at = datetime.combine(date, datetime.min.time(), tzinfo=PARIS) + timedelta(hours=int(start_hour))
-end_at = start_at + timedelta(hours=int(duration_hours))
+if check or submit:
+    error = slot_error(start_at, end_at)
+    if error:
+        st.error(error)
+        check = submit = False
+    else:
+        st.caption(f"Créneau {describe_slot(start_at, end_at)}")
+
+UNREACHABLE = "Booking ne répond pas (service en veille ou injoignable). Réessayez dans une minute."
 
 if check:
-    resp = httpx.get(
-        f"{BOOKING_API_URL}/v2/booking/availability",
-        params={"place_type": place_type, "start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
-        headers=HEADERS,
-        timeout=TIMEOUT,
-    )
-    if resp.status_code == 200:
+    try:
+        resp = httpx.get(
+            f"{BOOKING_API_URL}/v2/booking/availability",
+            params={"place_type": place_type, "start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
+            headers=HEADERS,
+            timeout=TIMEOUT,
+        )
+    except httpx.HTTPError:
+        resp = None
+        st.error(UNREACHABLE)
+    if resp is None:
+        pass
+    elif resp.status_code == 200:
         data = resp.json()
         if data["available"]:
             st.success(f"Disponible ({data['min_free_capacity']} place(s) libre(s) sur le créneau)")
@@ -80,9 +152,9 @@ if submit:
                 headers=HEADERS,
                 timeout=TIMEOUT,
             )
-    except httpx.TimeoutException:
+    except httpx.HTTPError:
         resp = None
-        st.error("Booking n'a pas répondu à temps (services en veille ?). Réessayez dans une minute.")
+        st.error(UNREACHABLE)
     if resp is None:
         pass
     elif resp.status_code != 201:
@@ -152,10 +224,16 @@ if cancel_submit and not (cancel_id.isdigit() and len(cancel_id) == 6):
     # Vérifié avant de construire l'URL : le code saisi y est inséré tel quel.
     st.error("Le code de réservation comporte 6 chiffres.")
 elif cancel_submit:
-    resp = httpx.post(
-        f"{BOOKING_API_URL}/v2/booking/reservations/{cancel_id}/cancel", headers=HEADERS, timeout=TIMEOUT
-    )
-    if resp.status_code != 200:
+    try:
+        resp = httpx.post(
+            f"{BOOKING_API_URL}/v2/booking/reservations/{cancel_id}/cancel", headers=HEADERS, timeout=TIMEOUT
+        )
+    except httpx.HTTPError:
+        resp = None
+        st.error(UNREACHABLE)
+    if resp is None:
+        pass
+    elif resp.status_code != 200:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:
         st.success(f"Réservation {resp.json()['id']} annulée, la place est libérée.")
