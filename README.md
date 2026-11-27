@@ -26,7 +26,7 @@ Dernière mise à jour : **27 novembre**.
 | Swagger | https://booking-api-vhy5.onrender.com/docs |
 | OpenAPI | https://booking-api-vhy5.onrender.com/openapi.json |
 | Métriques | https://booking-api-vhy5.onrender.com/v2/booking/metrics |
-| Front | `<URL Render de booking-front, à compléter>` |
+| Front | https://booking-front-ltvv.onrender.com |
 | Code | https://github.com/Yanom-school-projects/M1-Projet-Architecture-Booking |
 
 ## État de maturité
@@ -36,7 +36,7 @@ Dernière mise à jour : **27 novembre**.
 | Aspect | État | Constat |
 |---|---|---|
 | Métier | 3 | Capacité par type et par heure, créneaux, cycle de vie, idempotence du paiement. Écart assumé : annulation sans remboursement. |
-| API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres possible via `DATABASE_URL`. |
+| API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres en ligne : les réservations survivent aux mises en veille et redéploiements. |
 | Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
 | Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
 | Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus, 110 tests pytest (métier, API, Access, sécurité). |
@@ -253,7 +253,13 @@ Côté front : `BOOKING_API_URL` et `BOOKING_API_KEY` (valeur de `API_KEY`).
 Variables à définir dans Render (onglet *Environment*) : celles de la section Configuration pour l'API,
 `BOOKING_API_URL` et `BOOKING_API_KEY` pour le front.
 
-Chaque push sur `main` redéploie les deux services (auto-deploy Render).
+**Données.** Le disque d'un service Render gratuit est effacé à chaque redémarrage : la base n'est donc pas un
+fichier SQLite mais une base **Postgres** en ligne, désignée par `DATABASE_URL`. Les réservations et la capacité
+survivent aux mises en veille et aux redéploiements (vérifié). `LOG_DIR` est laissé vide : les logs vont dans la
+console, consultable dans l'onglet *Logs* de Render.
+
+Chaque push sur `main` redéploie les deux services, une fois la CI GitHub Actions passée (auto-deploy Render
+réglé sur *After CI Checks Pass*).
 
 ## Intégration continue (GitHub Actions)
 
