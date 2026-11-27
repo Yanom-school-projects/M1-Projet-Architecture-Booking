@@ -18,7 +18,7 @@ router = APIRouter()
     status_code=201,
     responses={
         409: {"description": "Aucune capacité disponible sur ce créneau."},
-        422: {"description": "Créneau invalide (non aligné sur une heure pleine, passé, ou trop long/lointain)."},
+        422: {"description": "Créneau invalide (hors quart d'heure, passé, ou trop long/lointain)."},
         502: {"description": "Un service dépendant (Vehicles, Pricing ou Payment) n'a pas répondu correctement."},
     },
 )
@@ -29,7 +29,7 @@ async def create_reservation(
 ):
     """Orchestre la création d'une réservation :
 
-    1. valide le créneau (heures pleines, horizon 30 jours, durée max 7 jours) ;
+    1. valide le créneau (quarts d'heure, horizon 30 jours, durée max 7 jours) ;
     2. vérifie et réserve la capacité disponible ;
     3. résout la plaque en identifiant pseudonymisé auprès de Vehicles ;
     4. demande le prix à Pricing ;

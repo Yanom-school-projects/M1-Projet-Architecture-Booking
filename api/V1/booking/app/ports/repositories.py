@@ -62,3 +62,15 @@ class CapacityRepository(ABC):
 
     @abstractmethod
     def save(self, slot: CapacitySlot) -> None: ...
+
+    @abstractmethod
+    def find_range(self, place_type: PlaceType, start: datetime, end: datetime) -> dict[datetime, CapacitySlot]:
+        """Lecture seule : créneaux existants de [start, end), indexés par début.
+        Une seule requête, quel que soit le nombre de quarts d'heure."""
+
+    @abstractmethod
+    def get_range(self, place_type: PlaceType, slot_starts: list[datetime]) -> list[CapacitySlot]:
+        """Créneaux demandés, dans l'ordre, créés à 0/0 s'ils n'existent pas."""
+
+    @abstractmethod
+    def save_many(self, slots: list[CapacitySlot]) -> None: ...

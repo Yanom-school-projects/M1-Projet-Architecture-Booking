@@ -1,6 +1,6 @@
 """Seed de la capacité réservable pour le dev/test local, en attendant que le
 vrai service Parking (source normale de ces allocations, via POST /v2/booking/capacity-slots/sync)
-soit disponible. Alloue une capacité horaire, pour chaque type de place, sur
+soit disponible. Alloue une capacité par quart d'heure, pour chaque type de place, sur
 les prochains jours.
 
 Usage :
@@ -28,13 +28,14 @@ DEFAULT_CAPACITY = {
 
 def seed(api_url: str, days: int, api_key: str) -> None:
     # Naïf en UTC, comme le reste du service (voir app/services/reservation_service.py).
-    start_hour = datetime.now(timezone.utc).replace(tzinfo=None, minute=0, second=0, microsecond=0)
-    total_hours = days * 24
+    now = datetime.now(timezone.utc).replace(tzinfo=None, second=0, microsecond=0)
+    start = now.replace(minute=now.minute - now.minute % 15)
+    total_slots = days * 24 * 4
 
     headers = {"X-API-Key": api_key} if api_key else {}
     with httpx.Client(timeout=5.0, headers=headers) as client:
-        for h in range(total_hours):
-            slot_start = start_hour + timedelta(hours=h)
+        for q in range(total_slots):
+            slot_start = start + timedelta(minutes=15 * q)
             for place_type, allocated in DEFAULT_CAPACITY.items():
                 resp = client.put(
                     f"{api_url}/v2/booking/capacity-slots/{place_type}/{slot_start.isoformat()}",
@@ -42,7 +43,7 @@ def seed(api_url: str, days: int, api_key: str) -> None:
                 )
                 resp.raise_for_status()
 
-    print(f"Capacité allouée sur {total_hours}h ({days} jour(s)) à partir de {start_hour.isoformat()}.")
+    print(f"Capacité allouée sur {days} jour(s) ({total_slots} quarts d'heure) à partir de {start.isoformat()}.")
     print(f"Répartition : {DEFAULT_CAPACITY}")
 
 

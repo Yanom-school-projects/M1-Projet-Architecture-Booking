@@ -19,7 +19,7 @@ router = APIRouter()
     response_model=AvailabilityResponse,
     response_description="Disponibilité et capacité minimale libre sur le créneau demandé.",
     responses={
-        422: {"description": "Créneau invalide (non aligné sur une heure pleine, passé, ou trop long/lointain)."}
+        422: {"description": "Créneau invalide (hors quart d'heure, passé, ou trop long/lointain)."}
     },
 )
 def get_availability(
@@ -31,8 +31,8 @@ def get_availability(
     """Répond à la question « pour ce type de place, entre `start_at` et
     `end_at`, reste-t-il une capacité disponible ? ».
 
-    Le créneau est découpé en heures pleines ; la disponibilité renvoyée est
-    celle de l'heure la plus chargée du créneau (le facteur limitant). Cette
+    Le créneau est découpé en quarts d'heure ; la disponibilité renvoyée est
+    celle du quart d'heure le plus chargé du créneau (le facteur limitant). Cette
     lecture n'a aucun effet sur la capacité : elle ne réserve rien.
 
     Les mêmes règles de créneau que pour une réservation s'appliquent. Les

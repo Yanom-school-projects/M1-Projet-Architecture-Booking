@@ -1,7 +1,7 @@
 """Implémentation SQLAlchemy des ports de persistance (ports/repositories.py).
 Convertit entre les entités du domaine (dataclasses) et les modèles ORM."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -149,7 +149,51 @@ class SqlAlchemyCapacityRepository(CapacityRepository):
         return _capacity_to_domain(row)
 
     def save(self, slot: CapacitySlot) -> None:
-        row = self._session.get(CapacitySlotModel, slot.id)
-        row.allocated = slot.allocated
-        row.booked = slot.booked
+        self.save_many([slot])
+
+    def _rows_in_range(self, place_type: PlaceType, start: datetime, end: datetime) -> list[CapacitySlotModel]:
+        return (
+            self._session.query(CapacitySlotModel)
+            .filter(
+                CapacitySlotModel.place_type == place_type,
+                CapacitySlotModel.slot_start >= start,
+                CapacitySlotModel.slot_start < end,
+            )
+            .all()
+        )
+
+    def find_range(self, place_type: PlaceType, start: datetime, end: datetime) -> dict[datetime, CapacitySlot]:
+        return {row.slot_start: _capacity_to_domain(row) for row in self._rows_in_range(place_type, start, end)}
+
+    def get_range(self, place_type: PlaceType, slot_starts: list[datetime]) -> list[CapacitySlot]:
+        """Une requête pour lire tout le créneau, une écriture groupée pour
+        créer les quarts d'heure manquants : une réservation de 7 jours
+        touche 672 quarts d'heure, la synchro Parking plus de 3 500 par type."""
+        if not slot_starts:
+            return []
+        rows = self._rows_in_range(place_type, min(slot_starts), max(slot_starts) + timedelta(seconds=1))
+        existing = {row.slot_start: row for row in rows}
+        missing = [
+            CapacitySlotModel(
+                id=CapacitySlot(place_type=place_type, slot_start=s).id,
+                place_type=place_type,
+                slot_start=s,
+                allocated=0,
+                booked=0,
+            )
+            for s in slot_starts
+            if s not in existing
+        ]
+        if missing:
+            self._session.add_all(missing)
+            self._session.flush()
+            existing.update({row.slot_start: row for row in missing})
+        return [_capacity_to_domain(existing[s]) for s in slot_starts]
+
+    def save_many(self, slots: list[CapacitySlot]) -> None:
+        for slot in slots:
+            # Déjà chargées dans la session : get() ne refait pas de requête.
+            row = self._session.get(CapacitySlotModel, slot.id)
+            row.allocated = slot.allocated
+            row.booked = slot.booked
         self._session.flush()

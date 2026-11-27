@@ -35,8 +35,8 @@ class AvailabilityResponse(BaseModel):
     """Résultat d'une recherche de disponibilité sur un créneau donné."""
 
     place_type: PlaceType = Field(..., description="Type de place recherché.")
-    start_at: UtcDatetimeOut = Field(..., description="Début du créneau en UTC (heure pleine, inclus).")
-    end_at: UtcDatetimeOut = Field(..., description="Fin du créneau en UTC (heure pleine, exclus).")
+    start_at: UtcDatetimeOut = Field(..., description="Début du créneau en UTC (quart d'heure, inclus).")
+    end_at: UtcDatetimeOut = Field(..., description="Fin du créneau en UTC (quart d'heure, exclus).")
     available: bool = Field(..., description="True si au moins une place est libre sur tout le créneau.")
     min_free_capacity: int = Field(
         ..., description="Nombre minimum de places libres observé sur les heures du créneau (le facteur limitant)."
@@ -63,13 +63,15 @@ class ReservationCreateRequest(BaseModel):
     place_type: PlaceType = Field(..., description="Type de place souhaité.")
     start_at: UtcDatetime = Field(
         ...,
-        description="Début du créneau, aligné sur une heure pleine. Sans fuseau, la date est lue comme de l'UTC.",
-        examples=["2026-11-02T14:00:00+01:00"],
+        description="Début du créneau, sur un quart d'heure (:00, :15, :30, :45). "
+        "Sans fuseau, la date est lue comme de l'UTC.",
+        examples=["2026-11-02T07:45:00+01:00"],
     )
     end_at: UtcDatetime = Field(
         ...,
-        description="Fin du créneau, aligné sur une heure pleine. Sans fuseau, la date est lue comme de l'UTC.",
-        examples=["2026-11-02T16:00:00+01:00"],
+        description="Fin du créneau, sur un quart d'heure (:00, :15, :30, :45). "
+        "Sans fuseau, la date est lue comme de l'UTC.",
+        examples=["2026-11-02T16:30:00+01:00"],
     )
 
 

@@ -39,7 +39,7 @@ class Reservation:
 
 @dataclass
 class CapacitySlot:
-    """Nombre de places réservables par type et par heure pleine — pas
+    """Nombre de places réservables par type et par quart d'heure — pas
     d'affectation nominale d'une place précise, conformément au cadrage
     métier (le parking gère un stock, pas des places numérotées)."""
 

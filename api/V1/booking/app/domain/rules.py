@@ -1,10 +1,28 @@
 """Règles métier pures : aucune dépendance à une base de données, un service
 externe ou l'heure système directement (elle est injectée par l'appelant,
-pour que ces fonctions restent testables sans mock)."""
+pour que ces fonctions restent testables sans mock).
+
+Unité de temps : le quart d'heure (v2.7.0). Un créneau commence et finit sur
+:00, :15, :30 ou :45, et la capacité est comptée par quart d'heure. Écart
+assumé avec le cadrage métier (tranches d'une heure), aligné sur la
+facturation de Pricing, elle aussi au quart d'heure."""
 
 from datetime import datetime, timedelta
 
 from .exceptions import InvalidSlotError
+
+SLOT_MINUTES = 15
+SLOT = timedelta(minutes=SLOT_MINUTES)
+
+
+def is_slot_aligned(value: datetime) -> bool:
+    """Vrai si `value` tombe pile sur un quart d'heure (:00, :15, :30, :45)."""
+    return value.minute % SLOT_MINUTES == 0 and value.second == 0 and value.microsecond == 0
+
+
+def slot_floor(value: datetime) -> datetime:
+    """Début du quart d'heure qui contient `value` (9 h 25 -> 9 h 15)."""
+    return value.replace(minute=value.minute - value.minute % SLOT_MINUTES, second=0, microsecond=0)
 
 
 def validate_slot(
@@ -15,20 +33,21 @@ def validate_slot(
     horizon_days: int,
     max_duration_hours: int,
 ) -> None:
-    """Règles du cadrage métier : créneaux sur heures pleines, horizon de
-    réservation, durée max alignée sur le plafond de stationnement."""
-    if (start_at.minute, start_at.second, start_at.microsecond) != (0, 0, 0):
-        raise InvalidSlotError("start_at doit être aligné sur une heure pleine")
-    if (end_at.minute, end_at.second, end_at.microsecond) != (0, 0, 0):
-        raise InvalidSlotError("end_at doit être aligné sur une heure pleine")
+    """Créneau sur des quarts d'heure, horizon de réservation, durée max
+    alignée sur le plafond de stationnement."""
+    if not is_slot_aligned(start_at):
+        raise InvalidSlotError("start_at doit tomber sur un quart d'heure (:00, :15, :30 ou :45)")
+    if not is_slot_aligned(end_at):
+        raise InvalidSlotError("end_at doit tomber sur un quart d'heure (:00, :15, :30 ou :45)")
     if end_at <= start_at:
         raise InvalidSlotError("end_at doit être postérieur à start_at")
 
-    current_hour = now.replace(minute=0, second=0, microsecond=0)
-    if start_at < current_hour:
+    # Le quart d'heure en cours reste réservable.
+    current_slot = slot_floor(now)
+    if start_at < current_slot:
         raise InvalidSlotError("Le créneau demandé est déjà passé")
 
-    horizon = current_hour + timedelta(days=horizon_days)
+    horizon = current_slot + timedelta(days=horizon_days)
     if start_at > horizon:
         raise InvalidSlotError(f"Créneau au-delà de l'horizon de réservation ({horizon_days} jours)")
 
@@ -36,12 +55,12 @@ def validate_slot(
         raise InvalidSlotError(f"Durée de réservation supérieure au maximum autorisé ({max_duration_hours}h)")
 
 
-def hour_slots(start_at: datetime, end_at: datetime) -> list[datetime]:
-    """Découpe [start_at, end_at) en heures pleines : une réservation de
-    plusieurs heures consomme une unité de capacité sur chacune d'elles."""
+def slot_starts(start_at: datetime, end_at: datetime) -> list[datetime]:
+    """Découpe [start_at, end_at) en quarts d'heure : une réservation consomme
+    une unité de capacité sur chacun d'eux (7 h 45 - 9 h -> 7 h 45, 8 h, 8 h 15, 8 h 30, 8 h 45)."""
     slots = []
     current = start_at
     while current < end_at:
         slots.append(current)
-        current += timedelta(hours=1)
+        current += SLOT
     return slots

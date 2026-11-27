@@ -13,7 +13,7 @@ class DomainError(Exception):
 
 
 class InvalidSlotError(DomainError):
-    """Créneau invalide : alignement sur une heure pleine, horizon de
+    """Créneau invalide : alignement sur un quart d'heure, horizon de
     réservation ou durée maximum."""
 
 

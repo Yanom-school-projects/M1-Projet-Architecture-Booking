@@ -20,7 +20,7 @@ router = APIRouter()
     response_description="L'état du créneau après application de l'allocation.",
     responses={
         409: {"description": "Allocation inférieure au nombre de places déjà réservées sur ce créneau."},
-        422: {"description": "slot_start n'est pas une heure pleine, ou allocated est négatif."},
+        422: {"description": "slot_start ne tombe pas sur un quart d'heure, ou allocated est négatif."},
     },
 )
 def set_capacity_slot(
@@ -28,12 +28,12 @@ def set_capacity_slot(
     place_type: PlaceType = Path(..., description="Type de place concerné."),
     slot_start: datetime = Path(
         ...,
-        description="Heure pleine du créneau, ex. `2026-11-26T09:00:00`. Sans fuseau, la date est lue comme de l'UTC.",
+        description="Début du quart d'heure, ex. `2026-11-26T09:15:00`. Sans fuseau, la date est lue comme de l'UTC.",
     ),
     capacity_service: CapacityService = Depends(get_capacity_service),
 ):
     """Indique combien de places d'un type donné sont mises à disposition de
-    Booking sur un créneau d'une heure. En temps normal, cette valeur vient
+    Booking sur un quart d'heure. En temps normal, cette valeur vient
     de la synchronisation avec **Parking** (`POST /capacity-slots/sync`) ;
     cette route sert à ajuster un créneau précis (tests, correction manuelle).
 

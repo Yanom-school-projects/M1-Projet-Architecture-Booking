@@ -12,7 +12,7 @@ from typing import Any, Mapping, Optional
 from app.application.capacity_service import CapacityService
 from app.domain.enums import PlaceType
 from app.domain.exceptions import PaymentOutcomeUnknownError, PaymentRejectedError
-from app.domain.rules import hour_slots
+from app.domain.rules import slot_starts
 from app.domain.value_objects import PaymentAttempt, PaymentStatus, PriceQuote
 from app.ports.event_publisher import EventPublisher
 from app.ports.external_services import PaymentPort, PricingPort, VehiclesPort
@@ -110,18 +110,18 @@ def future_slot(days: int = 2, hour: int = 10, hours: int = 2) -> tuple[datetime
 
 
 def allocate(uow, place_type: PlaceType, start: datetime, end: datetime, places: int) -> None:
-    """Simule Parking : `places` places réservables sur chaque heure du créneau."""
+    """Simule Parking : `places` places réservables sur chaque quart d'heure du créneau."""
     capacity = CapacityService(uow)
-    for slot_start in hour_slots(start, end):
+    for slot_start in slot_starts(start, end):
         capacity.set_allocation(place_type, slot_start, places)
     uow.commit()
 
 
 def booked(uow, place_type: PlaceType, start: datetime, end: datetime) -> list[int]:
-    """Places réservées sur chaque heure du créneau."""
+    """Places réservées sur chaque quart d'heure du créneau."""
     uow.session.expire_all()
     result = []
-    for slot_start in hour_slots(start, end):
+    for slot_start in slot_starts(start, end):
         slot = uow.capacity.find(place_type, slot_start)
         result.append(slot.booked if slot else 0)
     return result

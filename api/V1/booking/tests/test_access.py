@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from app.domain.rules import slot_starts
 from app.domain.value_objects import PaymentStatus
 from tests.fakes import future_slot
 
@@ -19,8 +20,8 @@ URL = f"{PREFIX}/reservations/valid"
 def slot(client):
     """Créneau de 10 h à 12 h (UTC) dans deux jours, avec une place."""
     start, end = future_slot(hour=10, hours=2)
-    for hour in (start, start + timedelta(hours=1)):
-        client.put(f"{PREFIX}/capacity-slots/STANDARD/{hour.isoformat()}", json={"allocated": 1})
+    for quarter in slot_starts(start, end):
+        client.put(f"{PREFIX}/capacity-slots/STANDARD/{quarter.isoformat()}", json={"allocated": 1})
     return start, end
 
 

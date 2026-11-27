@@ -23,7 +23,7 @@ def put_capacity(client, start: datetime, end: datetime, places: int, place_type
     while current < end:
         response = client.put(f"{PREFIX}/capacity-slots/{place_type}/{iso(current)}", json={"allocated": places})
         assert response.status_code == 200, response.text
-        current += timedelta(hours=1)
+        current += timedelta(minutes=15)
 
 
 def reservation_body(start: datetime, end: datetime, **overrides) -> dict:
@@ -72,7 +72,7 @@ def test_disponibilite(client, slot):
 
 
 def test_disponibilite_creneau_invalide_422(client):
-    start = current_hour() + timedelta(days=2, minutes=30)
+    start = current_hour() + timedelta(days=2, minutes=20)
     params = {"place_type": "STANDARD", "start_at": iso(start), "end_at": iso(start + timedelta(hours=1))}
     assert client.get(f"{PREFIX}/availability", params=params).status_code == 422
 
@@ -102,7 +102,7 @@ def test_parcours_complet_reservation_paiement_annulation(client, fakes, uow, sl
     cancelled = client.post(f"{PREFIX}/reservations/{reservation['id']}/cancel")
     assert cancelled.status_code == 200
     assert cancelled.json()["status"] == "cancelled"
-    assert booked(uow, PlaceType.STANDARD, *slot) == [0, 0]
+    assert booked(uow, PlaceType.STANDARD, *slot) == [0] * 8
 
 
 def test_creneau_complet_409(client, slot):
@@ -111,9 +111,9 @@ def test_creneau_complet_409(client, slot):
     assert response.status_code == 409
 
 
-def test_creneau_hors_heure_pleine_422(client, slot):
+def test_creneau_hors_quart_d_heure_422(client, slot):
     start, end = slot
-    body = reservation_body(start + timedelta(minutes=15), end)
+    body = reservation_body(start + timedelta(minutes=10), end)
     assert client.post(f"{PREFIX}/reservations", json=body).status_code == 422
 
 
@@ -264,3 +264,15 @@ def test_duree_sans_les_taches_de_fond():
 
     assert REGISTRY.get_sample_value("http_request_duration_seconds_count", labels) == 1
     assert REGISTRY.get_sample_value("http_request_duration_seconds_sum", labels) < 0.4
+
+
+def test_reservation_au_quart_d_heure_7h45_16h30(client, fakes):
+    day, _ = future_slot(hour=7)
+    start, end = day + timedelta(minutes=45), day + timedelta(hours=9, minutes=30)
+    put_capacity(client, start, end, 1)
+
+    response = client.post(f"{PREFIX}/reservations", json=reservation_body(start, end))
+
+    assert response.status_code == 201, response.text
+    assert response.json()["start_at"] == start.isoformat() + "Z"
+    assert response.json()["end_at"] == end.isoformat() + "Z"

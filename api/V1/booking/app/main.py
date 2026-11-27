@@ -21,7 +21,7 @@ from app.adapters.inbound.http.routers import availability, capacity, health, pa
 from app.adapters.inbound.http.security import AUTH_RESPONSES, require_api_key, require_api_key_or_bearer
 from app.adapters.inbound.http.security_headers_middleware import SecurityHeadersMiddleware
 from app.adapters.outbound.persistence.database import Base, engine
-from app.adapters.outbound.persistence.migrations import add_missing_columns
+from app.adapters.outbound.persistence.migrations import add_missing_columns, split_hourly_capacity
 from app.config import settings
 from app.logging_config import setup_logging
 
@@ -29,6 +29,7 @@ setup_logging()
 
 Base.metadata.create_all(bind=engine)
 add_missing_columns(engine)
+split_hourly_capacity(engine)
 
 API_DESCRIPTION = """
 Le service **Booking** gère la disponibilité future du parking et le cycle de vie
@@ -40,7 +41,7 @@ Toutes les routes sont préfixées par `/v2/booking` (ex. `POST /v2/booking/rese
 ### Rôle dans le système
 - **Parking** indique combien de places de chaque type sont proposées à la
   réservation : Booking le lit au démarrage puis toutes les heures
-  (`POST /capacity-slots/sync` pour forcer). `PUT /capacity-slots/{type}/{heure}` permet aussi d'ajuster
+  (`POST /capacity-slots/sync` pour forcer). `PUT /capacity-slots/{type}/{début}` permet aussi d'ajuster
   un créneau précis.
 - **Vehicles** résout la plaque du client en identifiant pseudonymisé.
 - **Pricing** calcule le montant d'une réservation.

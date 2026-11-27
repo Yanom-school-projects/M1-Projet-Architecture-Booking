@@ -2,16 +2,17 @@
 
 Parking ne pousse pas la capacité vers Booking (PUT /capacity) : c'est
 Booking qui lui demande, pour chaque type de place, combien de places sont
-proposées à la réservation, puis applique ce nombre à chaque heure de son
-calendrier (horizon de réservation + durée maximale d'une réservation).
+proposées à la réservation, puis applique ce nombre à chaque quart d'heure
+de son calendrier (horizon de réservation + durée maximale d'une réservation).
 
-Une heure n'est jamais ramenée sous le nombre de places déjà réservées :
+Un quart d'heure n'est jamais ramené sous le nombre de places déjà réservées :
 les réservations confirmées restent honorées si Parking réduit son offre."""
 
 import logging
 from datetime import datetime, timedelta
 
 from app.domain.enums import PlaceType
+from app.domain.rules import slot_floor, slot_starts
 from app.ports.parking import ParkingPort
 from app.ports.unit_of_work import UnitOfWork
 
@@ -24,7 +25,8 @@ class ParkingSyncService:
         self._parking = parking
 
     async def sync(self, now: datetime, hours: int) -> dict:
-        start = now.replace(minute=0, second=0, microsecond=0)
+        start = slot_floor(now)
+        quarters = slot_starts(start, start + timedelta(hours=hours))
         summary: dict = {}
         for place_type in PlaceType:
             try:
@@ -34,18 +36,21 @@ class ParkingSyncService:
                 summary[place_type.value] = {"error": "Parking injoignable ou catégorie inconnue"}
                 continue
 
+            # Lecture et création groupées : plus de 3 500 quarts d'heure par type.
+            slots = self._uow.capacity.get_range(place_type, quarters)
+            changed = []
             kept_for_bookings = 0
-            for h in range(hours):
-                slot = self._uow.capacity.get_or_create(place_type, start + timedelta(hours=h))
+            for slot in slots:
                 target = max(allocated, slot.booked)
                 if target != allocated:
                     kept_for_bookings += 1
                 if slot.allocated != target:
                     slot.allocated = target
-                    self._uow.capacity.save(slot)
+                    changed.append(slot)
+            self._uow.capacity.save_many(changed)
             self._uow.commit()
 
-            summary[place_type.value] = {"allocated": allocated, "hours_kept_for_bookings": kept_for_bookings}
+            summary[place_type.value] = {"allocated": allocated, "slots_kept_for_bookings": kept_for_bookings}
             logger.info(
                 "Capacité %s synchronisée depuis Parking : %s place(s) sur %sh", place_type.value, allocated, hours
             )

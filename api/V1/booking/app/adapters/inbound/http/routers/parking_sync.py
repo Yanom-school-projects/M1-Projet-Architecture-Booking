@@ -44,7 +44,7 @@ async def run_parking_sync() -> dict:
 
 async def parking_sync_loop() -> None:
     """Synchronise au démarrage puis à intervalle régulier : ajoute les
-    nouvelles heures réservables au fil des jours et suit les changements
+    nouveaux quarts d'heure réservables au fil des jours et suit les changements
     d'offre de Parking. Sur Render (plan gratuit), la base est vidée à chaque
     redémarrage : cette synchro la remplit à nouveau automatiquement."""
     while True:
@@ -66,10 +66,10 @@ async def parking_sync_loop() -> None:
 )
 async def sync_capacity():
     """Demande à **Parking** combien de places de chaque type sont proposées
-    à la réservation, et applique ce nombre à chaque heure des 30 prochains
+    à la réservation, et applique ce nombre à chaque quart d'heure des 30 prochains
     jours (+ 7 jours, durée maximale d'une réservation).
 
-    Une heure n'est jamais ramenée sous le nombre de places déjà réservées.
+    Un quart d'heure n'est jamais ramené sous le nombre de places déjà réservées.
     Lancé aussi automatiquement au démarrage puis toutes les heures.
     """
     if not settings.parking_service_url:
