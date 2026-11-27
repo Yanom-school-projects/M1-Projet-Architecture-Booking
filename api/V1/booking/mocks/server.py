@@ -48,9 +48,10 @@ def _vehicle_view(code: int) -> dict:
 
 
 @app.post("/vehicles/api/vehicle/create")
-def create_vehicle(payload: VehicleCreateRequest):
-    """Une plaque déjà connue renvoie le même `code` ; sinon le véhicule est
-    créé avec un nouveau `code`."""
+def create_vehicle(payload: VehicleCreateRequest) -> int:
+    """Comme le vrai Vehicles : renvoie le `code` seul (un entier), pas l'objet
+    véhicule. Une plaque déjà connue renvoie le même `code` ; sinon le
+    véhicule est créé avec un nouveau `code`."""
     plate = payload.licensePlate.strip().upper()
     if plate not in CODES_BY_PLATE:
         code = len(VEHICLES) + 1
@@ -64,7 +65,7 @@ def create_vehicle(payload: VehicleCreateRequest):
                 "twoWheels": bool(payload.isTwoWheels),
             },
         }
-    return _vehicle_view(CODES_BY_PLATE[plate])
+    return CODES_BY_PLATE[plate]
 
 
 @app.get("/vehicles/api/vehicles/{code}")
@@ -86,8 +87,8 @@ class QuoteRequest(BaseModel):
 def quote(payload: QuoteRequest):
     if payload.zone not in RATES:
         raise HTTPException(404, {"code": "ZONE_NOT_FOUND", "message": payload.zone})
-    hours = -(-payload.duration_min // 60)  # toute heure entamée est due
-    amount = (RATES[payload.zone] * hours).quantize(Decimal("0.01"))
+    quarters = -(-payload.duration_min // 15)  # tout quart d'heure entamé est dû
+    amount = (RATES[payload.zone] * quarters / 4).quantize(Decimal("0.01"))
     return {
         "quote_id": str(uuid.uuid4()),
         "grid_id": "mock-grid",

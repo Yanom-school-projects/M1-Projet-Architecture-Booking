@@ -4,9 +4,10 @@ uniquement ce que Vehicles lui renvoie.
 
 Contrat convenu avec l'équipe Vehicles (28 octobre) :
 POST /api/vehicle/create, corps `{licensePlate, isElectric, isDisabled,
-isXl, isTwoWheels}` → `{code, pseudoId, ...}`. Le `code` est généré par
-Vehicles et sert de plaque pseudonymisée : c'est lui que Booking stocke
-comme `vehicle_id`. Une plaque déjà connue doit renvoyer le même `code`."""
+isXl, isTwoWheels}` → le `code` seul (corps JSON = un entier, pas un
+objet). Le `code` est généré par Vehicles et sert de plaque pseudonymisée :
+c'est lui que Booking stocke comme `vehicle_id`. Une plaque déjà connue
+doit renvoyer le même `code`."""
 
 import logging
 
