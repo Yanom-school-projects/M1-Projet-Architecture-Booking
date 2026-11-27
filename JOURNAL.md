@@ -106,6 +106,49 @@ Suite
 - supprimer le mode secours Vehicles dès que Vehicles a une URL ;
 - reprendre ces 10 cas dans les tests pytest.
 
+## 24 novembre — revue de code et d'intégration
+
+Fait
+- **persistance** : `DATABASE_URL` accepte une URL Postgres (Neon / Render) collée telle quelle, forcée sur psycopg 3, avec vérification des connexions mises en veille (`pool_pre_ping`) ;
+- **Vehicles branché** : appel de `POST /api/vehicle/create`, le `code` renvoyé est stocké comme identifiant pseudonymisé ;
+- **nomenclature commune des types de place** (`STANDARD`, `HANDICAPPED`, `ELECTRIC`, `XL`, `TWO_WHEELS`) alignée sur Parking, sans correspondance propre à Booking ;
+- délai des appels sortants passé de 60 à 120 s : un service Render gratuit en veille met parfois plus d'une minute à répondre.
+
+Problèmes
+- les réveils successifs des services Render rallongent fortement le premier parcours de réservation.
+
+Suite
+- traçabilité (correlation ID) et observabilité.
+
+## 25 novembre — traçabilité et observabilité
+
+Fait
+- **logs** : console + un fichier par jour (`LOG_DIR`, 14 jours de rétention), erreurs journalisées avec leur cause ;
+- **correlation ID** `X-Correlation-ID` : repris ou généré à l'entrée, présent dans chaque ligne de log, renvoyé dans la réponse, transmis à Vehicles, Pricing, Payment, Parking et dans les événements RabbitMQ, et conservé avec la réservation pour le suivi du paiement en tâche de fond ;
+- **idempotence du paiement** : la clé d'idempotence est conservée avec la réservation, un nouvel essai ne crée plus un second paiement chez Payment ;
+- **API** : toutes les routes sous `/v2/booking`, routes de capacité renommées (`/capacity-slots/...`), README, docs et front mis à jour ;
+- **métriques Prometheus** sur `/v2/booking/metrics` : `http_requests_total` (méthode, route, code, succès/erreur) et `parking_operations_total` (réservations, paiements, annulations, vérifications Access, synchros de capacité) ;
+- **stack de supervision locale** (`docker-compose.yml`) : Booking + front + Prometheus + Grafana ; Prometheus supervise aussi les autres services sur Render ; les métriques de Pricing et Vehicles sont renommées à la lecture pour suivre la convention commune ; le jeton du `/metrics` d'Access est monté depuis un fichier ignoré par Git.
+
+Problèmes
+- chaque service avait sa propre convention de nommage des métriques : il a fallu s'entendre sur `http_requests_total` / `parking_operations_total` ;
+- pas encore de mesure de la durée des requêtes.
+
+Suite
+- CI/CD et sécurisation.
+
+## 27 novembre
+
+Fait
+- consignes de fin de projet récupérées (`consignes/`), analyse de l'écart avec le code : [todolist.md](todolist.md) ;
+- README mis à jour (URL Render, état de maturité, observabilité, Docker Compose).
+
+Problèmes
+- aucun test automatisé dans le dépôt, aucune route entrante protégée.
+
+Suite
+- clés d'API sur les routes sensibles, tests pytest, pipeline GitHub Actions avec déploiement conditionné aux tests.
+
 ---
 
 ## Point d'étape au 28 octobre

@@ -16,15 +16,34 @@ l'identifiant pseudonymisé fourni par Vehicles.
 
 **0.4.0**, renvoyée par `GET /v2/booking/health`.
 
+Dernière mise à jour : **27 novembre**.
+
 ## URL
 
 | | URL |
 |---|---|
-| API | `<URL Render de booking-api, à compléter>` |
-| Swagger | `<URL Render de booking-api>/docs` |
-| OpenAPI | `<URL Render de booking-api>/openapi.json` |
+| API | https://booking-api-vhy5.onrender.com |
+| Swagger | https://booking-api-vhy5.onrender.com/docs |
+| OpenAPI | https://booking-api-vhy5.onrender.com/openapi.json |
+| Métriques | https://booking-api-vhy5.onrender.com/v2/booking/metrics |
 | Front | `<URL Render de booking-front, à compléter>` |
 | Code | https://github.com/Yanom-school-projects/M1-Projet-Architecture-Booking |
+
+## État de maturité
+
+0 = non commencé, 1 = en cours, 2 = fonctionnel, 3 = maîtrisé
+
+| Aspect | État | Constat |
+|---|---|---|
+| Métier | 3 | Capacité par type et par heure, créneaux, cycle de vie, idempotence du paiement. Écart assumé : annulation sans remboursement. |
+| API / Déploiement | 2 | Sur Render, routes sous `/v2/booking`, `/health` avec version, Swagger. Base Postgres possible via `DATABASE_URL`. |
+| Intégration | 2 | Vehicles, Pricing, Payment, Parking, RabbitMQ (Messages) réels ; Access interroge `/reservations/valid`. Correlation ID propagé à tous les appels. |
+| Interface | 2 | Front Streamlit (heure de Paris) + tableau de bord Grafana. |
+| Qualité | 2 | Logs fichier/console avec correlation ID, erreurs propres, `/metrics` Prometheus. Pas de tests automatisés. |
+| CI/CD | 1 | Redéploiement automatique Render à chaque push sur `main`, sans tests ni contrôles. |
+| Sécurité | 1 | Secrets hors de Git, identifiants jamais logués. Routes entrantes pas encore protégées. |
+
+Reste à faire avant le rendu : [todolist.md](todolist.md).
 
 ## Fonctionnalités
 
@@ -77,6 +96,7 @@ Notification (champ `place_type_label` des événements, à côté du code `plac
 | POST | `/v2/booking/reservations/{id}/cancel` | Annuler une réservation confirmée |
 | PUT | `/v2/booking/capacity-slots/{place_type}/{slot_start}` | Ajuster la capacité d'un créneau précis |
 | POST | `/v2/booking/capacity-slots/sync` | Relancer la synchronisation de capacité avec Parking |
+| GET | `/v2/booking/metrics` | Métriques au format Prometheus (hors Swagger) |
 
 Toutes les dates sont en **UTC**. Une date envoyée avec un fuseau (`2026-11-02T14:00:00+01:00`) est
 convertie, une date sans fuseau est lue comme de l'UTC, et les réponses se terminent par `Z`.
@@ -137,19 +157,58 @@ $env:BOOKING_API_URL = "http://localhost:8000"
 
 Sans Parking, remplir la capacité à la main : `python scripts/seed_capacity.py --days 3`.
 
+### Avec Docker Compose (API + front + Prometheus + Grafana)
+
+Prérequis : `api/V1/booking/.env` rempli. Pour superviser Access, mettre son jeton dans
+`monitoring/prometheus/secrets/access_metrics_token` (dossier ignoré par Git).
+
+```powershell
+docker compose up -d --build
+```
+
+| | URL |
+|---|---|
+| Booking | http://localhost:8000/docs |
+| Front | http://localhost:8501 |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (tableau de bord « Parking Management : supervision ») |
+
+Base SQLite et logs dans un volume Docker : ils survivent à un `docker compose down` / `up`.
+Démo de panne : `docker compose stop booking`, la cible passe à `up = 0` dans Grafana.
+
+## Observabilité
+
+**Correlation ID.** Chaque requête reçoit l'en-tête `X-Correlation-ID` (repris s'il est fourni, généré sinon),
+renvoyé dans la réponse, écrit dans chaque ligne de log et transmis à Vehicles, Pricing, Payment, Parking et
+dans les événements RabbitMQ. C'est un identifiant opaque, sans donnée personnelle.
+
+**Logs.** Console, plus un fichier par jour dans `LOG_DIR` (14 jours de rétention).
+
+**Métriques** (`GET /v2/booking/metrics`) :
+
+| Métrique | Labels | Sens |
+|---|---|---|
+| `http_requests_total` | `method`, `route`, `status`, `outcome` | Trafic HTTP, `outcome` = `success` / `error` |
+| `parking_operations_total` | `service="booking"`, `operation`, `result` | Réservations créées / refusées, paiements acceptés / refusés, annulations, vérifications Access valides / invalides, synchros de capacité |
+
+Les noms suivent la convention commune du projet. `monitoring/prometheus/prometheus.yml` supervise aussi les
+autres services sur Render et renomme à la lecture les métriques de Pricing et Vehicles pour qu'elles suivent
+cette convention.
+
 ## Configuration
 
 Variables d'environnement, ou fichier `api/V1/booking/.env` (jamais commité) :
 
 | Variable | Rôle |
 |---|---|
-| `DATABASE_URL` | Base de données (SQLite par défaut) |
+| `DATABASE_URL` | Base de données : SQLite par défaut, Postgres en ligne (`postgresql://...` collée telle quelle) |
 | `VEHICLES_SERVICE_URL`, `PRICING_SERVICE_URL`, `PAYMENT_SERVICE_URL`, `PARKING_SERVICE_URL` | URL des services |
 | `VEHICLES_API_KEY`, `PRICING_API_KEY`, `PAYMENT_API_KEY`, `PARKING_API_KEY` | Clés envoyées dans l'en-tête `X-API-Key` (vide = pas d'en-tête) |
 | `CLOUDAMQP_URL`, `EVENT_BUS_EXCHANGE` | Bus d'événements (vide = événements seulement écrits dans les logs) |
 | `PAYMENT_POLL_INTERVAL_SECONDS`, `PAYMENT_POLL_TIMEOUT_SECONDS` | Suivi du paiement (5 s, 180 s) |
 | `PARKING_SYNC_INTERVAL_SECONDS` | Synchronisation avec Parking (3600 s) |
-| `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (60 s) |
+| `HTTP_TIMEOUT_SECONDS` | Délai des appels sortants (120 s, le temps qu'un service Render se réveille) |
+| `LOG_LEVEL`, `LOG_DIR`, `LOG_RETENTION_DAYS` | Niveau de log, dossier des fichiers de logs (vide = console seule, conseillé sur Render), rétention (14 jours) |
 | `VEHICLES_FALLBACK_ENABLED` | **Temporaire.** `true` : si Vehicles ne répond pas, Booking calcule lui-même l'identifiant du véhicule (empreinte de la plaque, préfixe `tmp-`) au lieu de renvoyer 502. `false` par défaut |
 | `VEHICLES_FALLBACK_SECRET` | **Temporaire.** Clé de l'empreinte du mode secours |
 
