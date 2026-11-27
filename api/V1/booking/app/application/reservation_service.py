@@ -8,7 +8,7 @@ adapters/inbound/http/dependencies.py."""
 
 import asyncio
 import logging
-import random
+import secrets
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -100,9 +100,12 @@ class ReservationService:
         communiquera au parking (par oral ou sur un ticket), elle doit
         rester courte. ~1M de combinaisons possibles ; on retire une
         collision avec la base plutôt que de la garantir mathématiquement
-        (suffisant vu le volume attendu pour ce MVP)."""
+        (suffisant vu le volume attendu pour ce MVP).
+
+        Tiré avec `secrets` et non `random` : le code permet de consulter et
+        d'annuler la réservation, il ne doit pas être prévisible."""
         for _ in range(RESERVATION_ID_ATTEMPTS):
-            candidate = f"{random.randint(0, 999_999):06d}"
+            candidate = f"{secrets.randbelow(1_000_000):06d}"
             if not self._uow.reservations.exists(candidate):
                 return candidate
         raise ReservationIdGenerationError("Impossible de générer un identifiant de réservation unique")
