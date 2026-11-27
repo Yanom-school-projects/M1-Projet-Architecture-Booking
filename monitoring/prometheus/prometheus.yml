@@ -1,0 +1,176 @@
+# Configuration Prometheus du projet Parking Management.
+#
+# Principe : Prometheus va LIRE (scrape) régulièrement l'endpoint de métriques
+# de chaque cible. Chaque lecture produit automatiquement la série
+#   up{job="...", instance="..."}  = 1 si la lecture a réussi, 0 sinon
+# → c'est elle qui sert à repérer un service indisponible.
+#
+# Vocabulaire :
+#   job      = un groupe de cibles qui exposent la même chose (ici : un microservice)
+#   instance = une cible précise (hôte:port) ; Prometheus ajoute ces deux labels
+#              à toutes les séries lues sur la cible.
+
+global:
+  scrape_interval: 15s     # fréquence de lecture par défaut
+  scrape_timeout: 10s      # au-delà, la lecture échoue → up = 0
+  evaluation_interval: 15s # fréquence d'évaluation des règles (aucune pour l'instant)
+
+scrape_configs:
+  # Prometheus se supervise lui-même (cible toujours UP : utile pour vérifier
+  # que l'interface et le stockage fonctionnent).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # --- Booking local (docker compose) ---------------------------------------
+  # Dans le réseau compose, un conteneur se joint par son NOM DE SERVICE.
+  # Cible idéale pour la démo de panne : docker compose stop booking.
+  - job_name: booking-local
+    metrics_path: /v2/booking/metrics   # défaut = /metrics
+    static_configs:
+      - targets: ["booking:8000"]
+
+  # --- Services déployés sur Render -----------------------------------------
+  # HTTPS sur le port 443 : scheme: https, et la cible sans « https:// ».
+  # Une instance Render gratuite endormie met jusqu'à ~1 min à se réveiller :
+  # intervalle et timeout plus larges pour ne pas la voir DOWN à tort
+  # (le timeout doit rester inférieur ou égal à l'intervalle).
+
+  - job_name: booking
+    scheme: https
+    metrics_path: /v2/booking/metrics
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["booking-api-vhy5.onrender.com:443"]
+
+  - job_name: parking
+    scheme: https
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["parking-6r73.onrender.com:443"]
+
+  - job_name: payment
+    scheme: https
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["payment-xp8n.onrender.com:443"]
+
+  # Pricing expose ses propres noms (pricing_http_requests_total,
+  # pricing_quotes_computed_total...). metric_relabel_configs les renomme À LA
+  # LECTURE, avant stockage, pour qu'ils suivent la convention commune
+  # (http_requests_total / parking_operations_total) et apparaissent dans les
+  # mêmes requêtes et tableaux de bord que les autres services.
+  # Les règles s'appliquent dans l'ordre : on pose d'abord les labels en
+  # repérant la métrique par son nom d'origine, on la renomme en dernier.
+  - job_name: pricing
+    scheme: https
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["pricing-9khk.onrender.com:443"]
+    metric_relabel_configs:
+      # Pricing compte les lectures de Prometheus sur /metrics : on les
+      # écarte, sinon elles gonflent le trafic mesuré.
+      - source_labels: [__name__, route]
+        regex: pricing_http_requests_total;/metrics
+        action: drop
+      # pricing_http_requests_total{method,route,status} → http_requests_total
+      # (mêmes labels que la convention, seul le nom change).
+      - source_labels: [__name__]
+        regex: pricing_http_requests_total
+        target_label: __name__
+        replacement: http_requests_total
+      # Devis calculés → parking_operations_total{operation="quote_computed", result="success"}
+      - source_labels: [__name__]
+        regex: pricing_quotes_computed_total
+        target_label: operation
+        replacement: quote_computed
+      # Publications de grille tarifaire → operation="grid_publication"
+      - source_labels: [__name__]
+        regex: pricing_grid_publications_total
+        target_label: operation
+        replacement: grid_publication
+      - source_labels: [__name__]
+        regex: pricing_(quotes_computed|grid_publications)_total
+        target_label: result
+        replacement: success
+      - source_labels: [__name__]
+        regex: pricing_(quotes_computed|grid_publications)_total
+        target_label: __name__
+        replacement: parking_operations_total
+
+  # Vehicles est une application Spring Boot (Micrometer) : convention de
+  # nommage différente, ramenée à la convention commune à la lecture.
+  - job_name: vehicles
+    scheme: https
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["parking-vehicles.onrender.com:443"]
+    metric_relabel_configs:
+      # Lectures de Prometheus sur /metrics : écartées (comme pour Booking).
+      - source_labels: [__name__, uri]
+        regex: http_server_requests_seconds_count;/metrics
+        action: drop
+      # outcome Spring (SUCCESS, REDIRECTION, CLIENT_ERROR, SERVER_ERROR...)
+      # → success / error, comme les autres services.
+      - source_labels: [__name__, outcome]
+        regex: http_server_requests_seconds_count;(SUCCESS|REDIRECTION|INFORMATIONAL)
+        target_label: outcome
+        replacement: success
+      - source_labels: [__name__, outcome]
+        regex: http_server_requests_seconds_count;(CLIENT_ERROR|SERVER_ERROR|UNKNOWN)
+        target_label: outcome
+        replacement: error
+      # uri (modèle de route chez Spring) → route.
+      - source_labels: [__name__, uri]
+        regex: http_server_requests_seconds_count;(.+)
+        target_label: route
+        replacement: $1
+      # Le _count d'un summary Spring est un compteur de requêtes : on le
+      # renomme en http_requests_total. Les labels Spring en plus (uri,
+      # exception, error) restent, sans gêner les sum by (...).
+      - source_labels: [__name__]
+        regex: http_server_requests_seconds_count
+        target_label: __name__
+        replacement: http_requests_total
+      # Véhicules créés → parking_operations_total{operation="vehicle_create", result="success"}
+      - source_labels: [__name__]
+        regex: vehicles_creations_total
+        target_label: operation
+        replacement: vehicle_create
+      - source_labels: [__name__]
+        regex: vehicles_creations_total
+        target_label: result
+        replacement: success
+      - source_labels: [__name__]
+        regex: vehicles_creations_total
+        target_label: __name__
+        replacement: parking_operations_total
+
+  - job_name: notification
+    scheme: https
+    metrics_path: /v1/metrics
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: ["notification-service-xris.onrender.com:443"]
+
+  # Access protège /metrics par un jeton (401 sans). Prometheus l'envoie dans
+  # l'en-tête « Authorization: Bearer <jeton> », lu depuis un FICHIER monté au
+  # lancement (docker-compose.yml) : le jeton n'est ni dans ce fichier, ni
+  # dans l'image, ni dans Git (monitoring/prometheus/secrets/ est ignoré).
+  - job_name: access
+    scheme: https
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/access_metrics_token
+    static_configs:
+      - targets: ["access-api-a1u7.onrender.com:443"]
+

@@ -1,0 +1,81 @@
+# Stack locale : Booking + front + Prometheus + Grafana.
+#
+#   docker compose up -d --build
+#
+#   Booking     http://localhost:8000/docs   (métriques : /v2/booking/metrics)
+#   Front       http://localhost:8501
+#   Prometheus  http://localhost:9090
+#   Grafana     http://localhost:3000   (admin / admin)
+#
+# Les autres microservices (Vehicles, Pricing, Payment, Parking) tournent sur
+# Render : Booking les appelle via les URLs de api/V1/booking/.env, et
+# Prometheus peut aussi les superviser directement sur Render.
+#
+# Simuler une panne : docker compose stop booking  (puis start booking)
+
+services:
+  booking:
+    build: ./api/V1/booking
+    container_name: booking
+    env_file: ./api/V1/booking/.env
+    environment:
+      # Base et logs dans un volume : survivent à un docker compose down/up.
+      DATABASE_URL: sqlite:////data/booking.db
+      LOG_DIR: /data/logs
+    volumes:
+      - booking-data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  front:
+    build: ./front
+    container_name: booking-front
+    environment:
+      # Nom du service compose = nom d'hôte sur le réseau interne.
+      BOOKING_API_URL: http://booking:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - booking
+    restart: unless-stopped
+
+  prometheus:
+    # Depuis ce conteneur, le Booking local se joint par « booking:8000 »,
+    # les services Render par leur domaine en HTTPS.
+    build: ./monitoring/prometheus
+    container_name: prometheus
+    volumes:
+      - prometheus-data:/prometheus
+      # Jetons d'accès aux /metrics protégés (Access) : montés en lecture
+      # seule au lancement, jamais copiés dans l'image ni commités.
+      - ./monitoring/prometheus/secrets:/etc/prometheus/secrets:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.3.2
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      # Consultation sans se connecter (lecture seule), pratique en démo.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Page d'accueil = le tableau de bord du projet.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/parking-overview.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  booking-data:
+  prometheus-data:
+  grafana-data:

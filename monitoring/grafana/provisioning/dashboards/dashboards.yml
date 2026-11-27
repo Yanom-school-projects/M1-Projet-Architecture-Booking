@@ -1,0 +1,15 @@
+# Provisioning : charge tous les tableaux de bord JSON du dossier monté sur
+# /var/lib/grafana/dashboards (voir docker-compose.yml). Modifier le JSON
+# dans le repo suffit : Grafana le relit toutes les 30 s.
+apiVersion: 1
+
+providers:
+  - name: parking
+    folder: Parking Management
+    type: file
+    # Les modifications faites dans l'interface ne sont pas sauvegardables :
+    # la source de vérité reste le JSON versionné dans le repo.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

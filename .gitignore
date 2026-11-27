@@ -4,3 +4,6 @@ __pycache__/
 *.db
 .env
 logs/
+
+# Jetons Prometheus (ex. /metrics d'Access)
+monitoring/prometheus/secrets/

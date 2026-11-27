@@ -1,0 +1,2 @@
+# Les jetons sont montés au lancement (docker-compose.yml), jamais copiés dans l'image.
+secrets/

@@ -1,0 +1,17 @@
+# Provisioning : Grafana lit ce fichier au démarrage et crée la source de
+# données, sans clic dans l'interface. « prometheus » est le nom du service
+# dans docker-compose.yml (réseau interne), pas localhost.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus          # référencé par les panneaux du tableau de bord
+    type: prometheus
+    access: proxy            # c'est le serveur Grafana qui interroge Prometheus
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Doit refléter le scrape_interval le plus long de prometheus.yml (30 s
+      # pour les services Render) : Grafana en déduit $__rate_interval.
+      timeInterval: 30s
