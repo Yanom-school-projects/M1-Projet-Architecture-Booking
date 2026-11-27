@@ -1,12 +1,15 @@
-"""Middleware ASGI : compte chaque requête HTTP dans http_requests_total.
+"""Middleware ASGI : compte chaque requête HTTP dans http_requests_total et
+mesure sa durée dans http_request_duration_seconds.
 
 Le label « route » est le MODÈLE de route (/v2/booking/reservations/{reservation_id})
 et non le chemin réel, sinon chaque code de réservation créerait sa propre
 série. Une URL qui ne correspond à aucune route est regroupée sous « unmatched »."""
 
+import time
+
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from app.metrics import HTTP_REQUESTS
+from app.metrics import HTTP_REQUEST_DURATION, HTTP_REQUESTS
 
 
 def _route_template(scope: Scope) -> str:
@@ -36,19 +39,30 @@ class PrometheusMiddleware:
             return
 
         status_code = 500  # valeur par défaut si une exception remonte sans réponse
+        started = time.perf_counter()
+        # Fin = dernier morceau de la réponse envoyé au client. Pas la fin de
+        # self.app : les tâches de fond (suivi du paiement après
+        # POST /reservations) tournent après la réponse et fausseraient la durée.
+        duration = None
 
         async def send_wrapper(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, duration
             if message["type"] == "http.response.start":
                 status_code = message["status"]
             await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                duration = time.perf_counter() - started
 
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
+            route = _route_template(scope)
             HTTP_REQUESTS.labels(
                 method=scope["method"],
-                route=_route_template(scope),
+                route=route,
                 status=str(status_code),
                 outcome="success" if status_code < 400 else "error",
             ).inc()
+            HTTP_REQUEST_DURATION.labels(method=scope["method"], route=route).observe(
+                duration if duration is not None else time.perf_counter() - started
+            )

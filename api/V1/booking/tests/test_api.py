@@ -224,3 +224,43 @@ def test_metriques_comptent_les_requetes_et_les_operations(client, slot):
     metrics = client.get(f"{PREFIX}/metrics").text
     assert 'route="/v2/booking/reservations/{reservation_id}"' in metrics
     assert 'route="/v2/booking/reservations/000000"' not in metrics
+
+
+def test_duree_des_requetes_par_route(client):
+    client.get(f"{PREFIX}/reservations/000000")
+    metrics = client.get(f"{PREFIX}/metrics").text
+    assert has_series(
+        metrics,
+        "http_request_duration_seconds_bucket",
+        method="GET",
+        route="/v2/booking/reservations/{reservation_id}",
+        le="120.0",
+    )
+    # /metrics lui-même n'est ni compté ni mesuré.
+    assert 'route="/v2/booking/metrics"' not in metrics
+
+
+def test_duree_sans_les_taches_de_fond():
+    """Le suivi du paiement tourne APRÈS la réponse : il ne doit pas gonfler
+    la durée mesurée de POST /reservations."""
+    import time
+
+    from fastapi import BackgroundTasks, FastAPI
+    from fastapi.testclient import TestClient
+    from prometheus_client import REGISTRY
+
+    from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
+
+    app = FastAPI()
+    app.add_middleware(PrometheusMiddleware)
+
+    @app.get("/test-tache-de-fond")
+    def route_with_background(background_tasks: BackgroundTasks):
+        background_tasks.add_task(time.sleep, 0.5)
+        return {"ok": True}
+
+    labels = {"method": "GET", "route": "/test-tache-de-fond"}
+    TestClient(app).get("/test-tache-de-fond")
+
+    assert REGISTRY.get_sample_value("http_request_duration_seconds_count", labels) == 1
+    assert REGISTRY.get_sample_value("http_request_duration_seconds_sum", labels) < 0.4
