@@ -8,6 +8,10 @@ import streamlit as st
 
 # Sans le "/" final : sinon les appels partent vers "//reservations" (404).
 BOOKING_API_URL = os.environ.get("BOOKING_API_URL", "http://localhost:8000").strip().rstrip("/")
+# Clé d'API de Booking (même valeur que son API_KEY). Le front est
+# rendu côté serveur par Streamlit : la clé ne part jamais dans le navigateur.
+BOOKING_API_KEY = os.environ.get("BOOKING_API_KEY", "").strip()
+HEADERS = {"X-API-Key": BOOKING_API_KEY} if BOOKING_API_KEY else {}
 # Large : sur Render gratuit, Booking puis Pricing et Payment peuvent
 # chacun mettre 30 à 60 s à se réveiller.
 TIMEOUT = 180.0
@@ -49,6 +53,7 @@ if check:
     resp = httpx.get(
         f"{BOOKING_API_URL}/v2/booking/availability",
         params={"place_type": place_type, "start_at": start_at.isoformat(), "end_at": end_at.isoformat()},
+        headers=HEADERS,
         timeout=TIMEOUT,
     )
     if resp.status_code == 200:
@@ -72,6 +77,7 @@ if submit:
                     "start_at": start_at.isoformat(),
                     "end_at": end_at.isoformat(),
                 },
+                headers=HEADERS,
                 timeout=TIMEOUT,
             )
     except httpx.TimeoutException:
@@ -98,7 +104,7 @@ def follow_payment():
         st.session_state["result"] = ("pending", reservation_id, None)
         st.rerun()
     try:
-        resp = httpx.get(f"{BOOKING_API_URL}/v2/booking/reservations/{reservation_id}", timeout=30)
+        resp = httpx.get(f"{BOOKING_API_URL}/v2/booking/reservations/{reservation_id}", headers=HEADERS, timeout=30)
     except httpx.HTTPError:
         st.info(f"Réservation n° **{reservation_id}** : statut momentanément indisponible, nouvel essai…")
         return
@@ -142,8 +148,13 @@ with st.form("cancel_form"):
     cancel_id = st.text_input("Code de réservation (6 chiffres)", max_chars=6)
     cancel_submit = st.form_submit_button("Annuler la réservation")
 
-if cancel_submit:
-    resp = httpx.post(f"{BOOKING_API_URL}/v2/booking/reservations/{cancel_id}/cancel", timeout=TIMEOUT)
+if cancel_submit and not (cancel_id.isdigit() and len(cancel_id) == 6):
+    # Vérifié avant de construire l'URL : le code saisi y est inséré tel quel.
+    st.error("Le code de réservation comporte 6 chiffres.")
+elif cancel_submit:
+    resp = httpx.post(
+        f"{BOOKING_API_URL}/v2/booking/reservations/{cancel_id}/cancel", headers=HEADERS, timeout=TIMEOUT
+    )
     if resp.status_code != 200:
         st.error(f"Erreur {resp.status_code} : {resp.text}")
     else:

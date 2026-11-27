@@ -48,6 +48,11 @@ class ReservationCreateRequest(BaseModel):
 
     vehicle_plate: str = Field(
         ...,
+        # Lettres, chiffres, espaces et tirets : couvre les formats français
+        # (AB-123-CD, 1234 AB 75) et la plupart des plaques étrangères.
+        min_length=2,
+        max_length=20,
+        pattern=r"^[A-Za-z0-9 -]+$",
         description="Plaque du véhicule. Résolue en identifiant pseudonymisé auprès du service Vehicles "
         "avant d'être stockée : la plaque réelle ne transite pas au-delà de cet appel.",
         examples=["AB-123-CD"],

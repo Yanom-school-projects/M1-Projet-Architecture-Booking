@@ -10,13 +10,15 @@ import logging
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Response
+from fastapi import Depends, FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.adapters.inbound.http.correlation_middleware import CorrelationIdMiddleware
 from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
 from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
+from app.adapters.inbound.http.security import AUTH_RESPONSES, require_api_key, require_api_key_or_bearer
+from app.adapters.inbound.http.security_headers_middleware import SecurityHeadersMiddleware
 from app.adapters.outbound.persistence.database import Base, engine
 from app.adapters.outbound.persistence.migrations import add_missing_columns
 from app.config import settings
@@ -53,6 +55,10 @@ Toutes les routes sont préfixées par `/v2/booking` (ex. `POST /v2/booking/rese
 refusé). Une réservation `confirmed` peut être annulée par le client
 (`POST /reservations/{id}/cancel`) : elle passe à `cancelled` et la place est
 libérée, **sans remboursement** (Payment ne gère pas les remboursements).
+
+### Authentification
+Toutes les routes métier exigent la clé d'API du service dans l'en-tête
+`X-API-Key` (bouton **Authorize**), sinon **401**. Seul `/health` reste public.
 
 ### Architecture
 Ce service suit une architecture hexagonale (ports & adapters) : voir
@@ -91,8 +97,13 @@ def _log_startup_config() -> None:
         logger.warning("CLOUDAMQP_URL vide : les événements ne sont PAS envoyés à Messages, seulement logués")
     if not settings.parking_service_url:
         logger.warning("PARKING_SERVICE_URL vide : pas de synchro de capacité, seul PUT /capacity-slots l'alimente")
-    if settings.vehicles_fallback_enabled:
+    if settings.vehicles_fallback_enabled and not settings.vehicles_fallback_secret:
+        logger.warning("VEHICLES_FALLBACK_SECRET vide : secours Vehicles NON activé malgré VEHICLES_FALLBACK_ENABLED")
+    elif settings.vehicles_fallback_enabled:
         logger.warning("TEMPORAIRE : secours Vehicles activé, identifiants calculés par Booking si Vehicles tombe")
+    if not settings.api_key:
+        # Échec fermé : sans clé configurée, les routes protégées refusent tout.
+        logger.warning("API_KEY vide : toutes les routes métier et /metrics refusent les appels (401)")
 
 
 @asynccontextmanager
@@ -115,11 +126,12 @@ app = FastAPI(
     lifespan=lifespan,
     title="Booking Service",
     description=API_DESCRIPTION,
-    version="0.4.0",
+    version="2.5.0",
     openapi_tags=TAGS_METADATA,
 )
 
 register_exception_handlers(app)
+app.add_middleware(SecurityHeadersMiddleware, api_prefix=API_PREFIX)
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(PrometheusMiddleware, excluded_paths={METRICS_PATH})
 
@@ -128,13 +140,16 @@ app.add_middleware(PrometheusMiddleware, excluded_paths={METRICS_PATH})
 # Sous le préfixe commun, comme les autres routes : côté Prometheus, le job
 # doit donc préciser metrics_path: /v2/booking/metrics (défaut : /metrics).
 # generate_latest() produit le format texte attendu par Prometheus.
-@app.get(METRICS_PATH, include_in_schema=False)
+# Même clé que les routes métier, aussi acceptée en Bearer pour Prometheus.
+@app.get(METRICS_PATH, include_in_schema=False, dependencies=[Depends(require_api_key_or_bearer)])
 def metrics() -> Response:
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
+# /health public (health check Render) ; tout le reste exige la clé d'API.
 app.include_router(health.router, prefix=API_PREFIX, tags=["health"])
-app.include_router(availability.router, prefix=API_PREFIX, tags=["availability"])
-app.include_router(reservations.router, prefix=API_PREFIX, tags=["reservations"])
-app.include_router(capacity.router, prefix=API_PREFIX, tags=["capacity"])
-app.include_router(parking_sync.router, prefix=API_PREFIX, tags=["capacity"])
+protected = {"prefix": API_PREFIX, "dependencies": [Depends(require_api_key)], "responses": AUTH_RESPONSES}
+app.include_router(availability.router, tags=["availability"], **protected)
+app.include_router(reservations.router, tags=["reservations"], **protected)
+app.include_router(capacity.router, tags=["capacity"], **protected)
+app.include_router(parking_sync.router, tags=["capacity"], **protected)

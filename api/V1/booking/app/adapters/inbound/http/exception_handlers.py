@@ -13,6 +13,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.correlation import get_correlation_id
 from app.domain.exceptions import (
     CapacityBelowBookedError,
     CapacityUnavailableError,
@@ -40,6 +41,19 @@ def register_exception_handlers(app: FastAPI) -> None:
     for exc_type, status_code in STATUS_CODES.items():
         app.add_exception_handler(exc_type, _handler_for(status_code))
     app.add_exception_handler(RequestValidationError, _log_validation_error)
+    app.add_exception_handler(Exception, _unexpected_error)
+
+
+async def _unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Erreur imprévue (bug, base injoignable...) : le détail complet va dans
+    les logs, le client ne reçoit qu'un message générique et l'identifiant de
+    corrélation pour retrouver la trace. Jamais de pile d'appels, de requête
+    SQL ou de chemin de fichier dans la réponse."""
+    logger.exception("%s %s -> 500 erreur inattendue", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erreur interne du service Booking", "correlation_id": get_correlation_id()},
+    )
 
 
 def _log_level(status_code: int) -> int:

@@ -49,7 +49,7 @@ def build_vehicles_client() -> VehiclesPort:
         settings.vehicles_service_url, api_key=settings.vehicles_api_key, timeout=settings.http_timeout_seconds
     )
     # TEMPORAIRE : mode secours tant que Vehicles n'est pas disponible.
-    if settings.vehicles_fallback_enabled:
+    if settings.vehicles_fallback_enabled and settings.vehicles_fallback_secret:
         return FallbackVehiclesClient(client, secret=settings.vehicles_fallback_secret)
     return client
 

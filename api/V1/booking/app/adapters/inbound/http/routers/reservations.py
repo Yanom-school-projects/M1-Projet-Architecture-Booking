@@ -79,7 +79,9 @@ def cancel_reservation(
     response_model=ReservationCheckResponse,
 )
 async def check_active_reservation(
-    vehicle_id: str = Query(..., min_length=1, description="Identifiant pseudonymisé fourni par Vehicles."),
+    vehicle_id: str = Query(
+        ..., min_length=1, max_length=128, description="Identifiant pseudonymisé fourni par Vehicles."
+    ),
     at: Optional[datetime] = Query(
         None,
         description="Instant à vérifier. Par défaut : maintenant. Sans fuseau, la date est lue comme de l'UTC.",
@@ -127,7 +129,7 @@ async def get_reservation(
     response_model=list[ReservationResponse],
 )
 def list_reservations(
-    vehicle_id: Optional[str] = None,
+    vehicle_id: Optional[str] = Query(None, max_length=128, description="Identifiant pseudonymisé du véhicule."),
     reservation_service: ReservationService = Depends(get_reservation_service),
 ):
     """Historique complet des réservations d'un véhicule, tous statuts
