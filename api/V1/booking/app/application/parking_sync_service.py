@@ -46,5 +46,7 @@ class ParkingSyncService:
             self._uow.commit()
 
             summary[place_type.value] = {"allocated": allocated, "hours_kept_for_bookings": kept_for_bookings}
-            logger.info("Capacité %s synchronisée depuis Parking : %s place(s) sur %sh", place_type.value, allocated, hours)
+            logger.info(
+                "Capacité %s synchronisée depuis Parking : %s place(s) sur %sh", place_type.value, allocated, hours
+            )
         return summary

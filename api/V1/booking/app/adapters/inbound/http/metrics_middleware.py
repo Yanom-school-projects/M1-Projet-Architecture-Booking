@@ -9,7 +9,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.metrics import HTTP_REQUESTS
 
 
-
 def _route_template(scope: Scope) -> str:
     """Chemin réel → modèle : /v2/booking/reservations/123456 devient
     /v2/booking/reservations/{reservation_id}. FastAPI renseigne

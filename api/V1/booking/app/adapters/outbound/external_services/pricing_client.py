@@ -15,6 +15,7 @@ from app.ports.external_services import PricingPort
 from .http_client import http_client
 from .wake_up import wake_up
 
+
 class HttpPricingClient(PricingPort):
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 30.0):
         self._base_url = base_url.rstrip("/")

@@ -7,6 +7,7 @@ from app.ports.parking import ParkingPort
 
 from .http_client import http_client
 
+
 class HttpParkingClient(ParkingPort):
     def __init__(self, base_url: str, api_key: str = "", timeout: float = 30.0):
         self._base_url = base_url.rstrip("/")

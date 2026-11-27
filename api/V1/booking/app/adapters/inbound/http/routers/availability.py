@@ -18,7 +18,9 @@ router = APIRouter()
     summary="Consulter la capacité disponible sur un créneau",
     response_model=AvailabilityResponse,
     response_description="Disponibilité et capacité minimale libre sur le créneau demandé.",
-    responses={422: {"description": "Créneau invalide (non aligné sur une heure pleine, passé, ou trop long/lointain)."}},
+    responses={
+        422: {"description": "Créneau invalide (non aligné sur une heure pleine, passé, ou trop long/lointain)."}
+    },
 )
 def get_availability(
     place_type: PlaceType,

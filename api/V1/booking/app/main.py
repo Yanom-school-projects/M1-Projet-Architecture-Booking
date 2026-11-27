@@ -14,8 +14,8 @@ from fastapi import Depends, FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.adapters.inbound.http.correlation_middleware import CorrelationIdMiddleware
-from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
 from app.adapters.inbound.http.exception_handlers import register_exception_handlers
+from app.adapters.inbound.http.metrics_middleware import PrometheusMiddleware
 from app.adapters.inbound.http.routers import availability, capacity, health, parking_sync, reservations
 from app.adapters.inbound.http.security import AUTH_RESPONSES, require_api_key, require_api_key_or_bearer
 from app.adapters.inbound.http.security_headers_middleware import SecurityHeadersMiddleware
@@ -70,7 +70,11 @@ TAGS_METADATA = [
     {"name": "health", "description": "Supervision : vérifie que le service répond."},
     {"name": "availability", "description": "Consultation de la capacité réservable, sans effet de bord métier."},
     {"name": "reservations", "description": "Création et consultation des réservations d'une place de parking."},
-    {"name": "capacity", "description": "Places réservables par créneau horaire : synchronisation depuis Parking et ajustement d'un créneau."},
+    {
+        "name": "capacity",
+        "description": "Places réservables par créneau horaire : synchronisation depuis Parking "
+        "et ajustement d'un créneau.",
+    },
 ]
 
 logger = logging.getLogger("booking.startup")

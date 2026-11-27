@@ -1,0 +1,16 @@
+# Lint Python du dépôt (API Booking et front), lancé par la CI : ruff check .
+line-length = 120
+target-version = "py312"
+extend-exclude = ["consignes"]
+
+[lint]
+# E/W : style PEP 8, F : erreurs (variable inutilisée, import manquant...),
+# I : ordre des imports, B : pièges courants (bugbear).
+select = ["E", "F", "W", "I", "B"]
+ignore = [
+    "B008", # Depends()/Query() en valeur par défaut : c'est l'usage normal de FastAPI
+    "B027", # méthodes wake_up() vides par défaut dans les ports, volontairement non abstraites
+]
+
+[lint.isort]
+known-first-party = ["app", "mocks", "tests"]
