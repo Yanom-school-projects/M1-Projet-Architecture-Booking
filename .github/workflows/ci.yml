@@ -1,0 +1,94 @@
+# Intégration continue de Booking : à chaque push et pull request.
+# Le déploiement reste fait par Render (auto-deploy du dernier commit de main) ;
+# régler Render sur « After CI Checks Pass » pour qu'il attende ce workflow.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Lecture seule : la CI n'a besoin de rien écrire dans le dépôt.
+permissions:
+  contents: read
+
+# Un nouveau push annule l'exécution en cours sur la même branche.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Même version que les images Docker (python:3.11-slim).
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff
+      # Configuration dans ruff.toml à la racine (API + front).
+      - run: ruff check --output-format=github .
+
+  tests:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api/V1/booking
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: api/V1/booking/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      # Base SQLite jetable et faux services : aucun secret nécessaire.
+      - run: python -m pytest -ra
+
+  security:
+    name: Sécurité (bandit, pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install bandit pip-audit
+      # SAST : failles courantes dans le code (aléatoire non sûr, injection...).
+      - name: Analyse du code (bandit)
+        run: bandit -r api/V1/booking/app front/app.py
+      # SCA : dépendances avec une vulnérabilité connue.
+      - name: Dépendances de l'API (pip-audit)
+        run: pip-audit -r api/V1/booking/requirements.txt
+      - name: Dépendances du front (pip-audit)
+        run: pip-audit -r front/requirements.txt
+
+  docker:
+    name: Build des images Docker
+    runs-on: ubuntu-latest
+    # Inutile de construire les images si le code ne passe pas les tests.
+    needs: [lint, tests, security]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image de l'API
+        run: docker build -t booking-api:${{ github.sha }} api/V1/booking
+      - name: Image du front
+        run: docker build -t booking-front:${{ github.sha }} front
+      - name: L'API démarre et répond sur /health
+        run: |
+          docker run -d --name booking -p 8000:8000 \
+            -e API_KEY=ci -e DATABASE_URL=sqlite:////data/booking.db -e LOG_DIR= \
+            booking-api:${{ github.sha }}
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/v2/booking/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs booking
+          exit 1
